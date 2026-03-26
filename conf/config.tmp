@@ -8,13 +8,13 @@ key=value
 ###############################
 
 # set scripture folder path (json API files)
-getbible.api=/home/username/v2
+getbible.api=/home/username/v3
 
 # set the path to the Crosswire zipped modules
 getbible.zip=/home/username/sword_zip
 
 # set Bible config file path
-getbible.bconf=/home/username/v2_builder/conf/CrosswireModulesMap.json
+getbible.bconf=/home/username/v3_builder/conf/CrosswireModulesMap.json
 
 # set download behaviour 0->no download; 1->download
 getbible.download=1

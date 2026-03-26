@@ -1,152 +1,218 @@
+"""
+Crosswire SWORD module downloader for getBible API.
+
+Downloads Bible modules from the Crosswire SWORD project repositories.
+Tries the RAW format first, falls back to WIN format and converts to RAW.
+"""
+
 import argparse
 import json
+import logging
 import os
-import os.path
 import shutil
+import sys
 import urllib.request
 import zipfile
 
-parser = argparse.ArgumentParser()
-# get the arguments
-parser.add_argument('--output_path', help='The local path like "/home/username/sword_zip"', default="sword_zip")
-parser.add_argument('--bible_conf')
-parser.add_argument('--no_whiptail', action='store_false')
-# set to args
-args = parser.parse_args()
-# this is a full path
-MAIN_PATH = args.output_path
+log = logging.getLogger(__name__)
 
-# some helper dictionaries
-v1_translation_names = json.loads(open(args.bible_conf).read())
-# scripts directory
-CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
+# Crosswire mirror base URLs
+_RAW_URL = 'https://www.crosswire.org/ftpmirror/pub/sword/packages/rawzip'
+_WIN_URL = 'https://www.crosswire.org/ftpmirror/pub/sword/packages/win'
 
 
-# function to create path if not exist
-def check_path(path):
-    if not os.path.isdir(path):
-        os.makedirs(path)
+def download_modules(module_names, output_path):
+    """Download SWORD modules from Crosswire repositories.
+
+    For each module, attempts to download the RAW zip format first.
+    If the RAW format is invalid, falls back to the WIN format and
+    converts it to RAW.
+
+    Args:
+        module_names: Dict mapping SWORD module names to abbreviations
+                      (only keys are used).
+        output_path: Directory to save downloaded .zip files.
+
+    Returns:
+        List of paths to successfully downloaded .zip files.
+    """
+    os.makedirs(output_path, exist_ok=True)
+
+    total = len(module_names)
+    downloaded = []
+
+    for i, sword_name in enumerate(module_names, 1):
+        file_path = os.path.join(output_path, f'{sword_name}.zip')
+        log.info('[%d/%d] Processing %s', i, total, sword_name)
+
+        if os.path.isfile(file_path) and zipfile.is_zipfile(file_path):
+            log.info('[%d/%d] %s.zip already exists', i, total, sword_name)
+            downloaded.append(file_path)
+            continue
+
+        # Try RAW format first
+        if _download_raw(sword_name, file_path):
+            downloaded.append(file_path)
+            continue
+
+        # Fall back to WIN format and convert
+        if _download_and_convert_win(sword_name, file_path, output_path):
+            downloaded.append(file_path)
+            continue
+
+        log.warning('[%d/%d] Failed to download %s from any source', i, total, sword_name)
+
+    log.info('Downloaded %d/%d modules to %s', len(downloaded), total, output_path)
+    return downloaded
 
 
-def zipper(src, dest, filename):
-    """Backup files from src to dest."""
-    base = os.path.basename(src)
-    new_file = filename + ".zip"
+def _download_raw(sword_name, file_path):
+    """Download a module in RAW zip format.
 
-    # Set the current working directory.
-    os.chdir(dest)
+    Args:
+        sword_name: SWORD module name.
+        file_path: Local path to save the zip file.
 
-    if os.path.exists(new_file):
-        os.unlink(new_file)
+    Returns:
+        True if downloaded and valid, False otherwise.
+    """
+    url = f'{_RAW_URL}/{sword_name}.zip'
 
-    # Write the zipfile and walk the source directory tree.
-    with zipfile.ZipFile(new_file, 'w') as zip_file:
-        for folder, _, files in os.walk(src):
-            for file in files:
-                zip_file.write(os.path.join(folder, file),
-                               arcname=os.path.join(folder[len(src):], file),
-                               compress_type=zipfile.ZIP_DEFLATED)
+    try:
+        log.info('Downloading RAW format: %s', sword_name)
+        urllib.request.urlretrieve(url, file_path)
+    except urllib.error.HTTPError as e:
+        log.warning('RAW download failed for %s: %s', sword_name, e)
+        return False
 
-    # move back to working directory
-    os.chdir(CURRENT_DIR)
+    if zipfile.is_zipfile(file_path):
+        return True
+
+    # Invalid zip — clean up
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        log.warning('%s.zip (RAW) was invalid and removed', sword_name)
+    return False
 
 
-# make sure the main folder exist
-check_path(MAIN_PATH)
-# number of items
-number = len(v1_translation_names.keys())
-each_count = int(98 / number)
-counter = 0
-# loop the names
-for sword_name in v1_translation_names:
-    # set local file name
-    file_path = MAIN_PATH + "/" + sword_name + ".zip"
-    # set remote URL
-    file_url = "https://www.crosswire.org/ftpmirror/pub/sword/packages/rawzip/" + sword_name + ".zip"
-    # notice name
-    file_name = sword_name + ".zip"
-    # check if file exist locally
-    if os.path.isfile(file_path):
-        print('XXX\n{}\n{} already exist\nXXX'.format(counter, file_name))
-    else:
-        try:
-            if args.no_whiptail:
-                print('Downloading the RAW format of {}'.format(file_name))
-            else:
-                print('XXX\n{}\nDownloading the RAW format of {}\nXXX'.format(counter, file_name))
-            urllib.request.urlretrieve(file_url, file_path)
-        except urllib.error.HTTPError as e:
-            if args.no_whiptail:
-                print('Download {} failed! {}'.format(sword_name, e))
-            else:
-                print('XXX\n{} Download {} failed! {}\nXXX'.format(counter, sword_name, e))
-    # check if this is a legitimate zip file
-    if not zipfile.is_zipfile(file_path):
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            if args.no_whiptail:
-                print('{} was removed since it has errors...'.format(file_path))
-            else:
-                print('XXX\n{}\n{} was removed since it has errors...\nXXX'.format(counter, file_path))
-        else:
-            if args.no_whiptail:
-                print('{} was not downloaded (check the link)...'.format(file_path))
-            else:
-                print('XXX\n{}\n{} was not downloaded (check the link)...\nXXX'.format(counter, file_path))
-        # we try the win repository
-        file_url = "https://www.crosswire.org/ftpmirror/pub/sword/packages/win/" + sword_name + ".zip"
-        try:
-            if args.no_whiptail:
-                print('Downloading the WIN format of {}'.format(file_name))
-            else:
-                print('XXX\n{}\nDownloading the WIN format of {}\nXXX'.format(counter, file_name))
-            urllib.request.urlretrieve(file_url, file_path)
-        except urllib.error.HTTPError as e:
-            if args.no_whiptail:
-                print('Download {} failed! {}'.format(sword_name, e))
-            else:
-                print('XXX\n{}\nDownload {} failed! {}\nXXX'.format(counter, sword_name, e))
-        # again check if this is a legitimate zip file
-        if not zipfile.is_zipfile(file_path):
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                if args.no_whiptail:
-                    print('{} was again removed since it has errors...'.format(file_name))
-                else:
-                    print('XXX\n{}\n{} was again removed since it has errors...\nXXX'.format(counter, file_name))
-            else:
-                if args.no_whiptail:
-                    print('{} was not downloaded (check the link)...'.format(file_path))
-                else:
-                    print('XXX\n{}\n{} was not downloaded (check the link)...\nXXX'.format(counter, file_path))
-        else:
-            # set local file name
-            folder_path = MAIN_PATH + "/" + sword_name
-            folder_raw_path = MAIN_PATH + "/" + sword_name + "/RAW"
-            data_raw_path = MAIN_PATH + "/" + sword_name + "/data.zip"
-            if args.no_whiptail:
-                print('{} is being converted to RAW format'.format(file_name))
-            else:
-                print('XXX\n{}\n{} is being converted to RAW format\nXXX'.format(counter, file_name))
-            # first we extract the WIN format
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                zip_ref.extractall(folder_path)
-            os.remove(file_path)
-            # now we extract the RAW format
-            with zipfile.ZipFile(data_raw_path, 'r') as zip_ref:
-                zip_ref.extractall(folder_raw_path)
-            os.remove(data_raw_path)
-            # now rename the folder
-            os.rename(folder_raw_path + "/newmods", folder_raw_path + "/mods.d")
-            # now zip the RAW folder
-            zipper(folder_raw_path, MAIN_PATH, sword_name)
-            # now remove the tmp folder
-            try:
-                shutil.rmtree(folder_path)
-            except OSError as e:
-                if args.no_whiptail:
-                    print("Error: %s - %s." % (e.filename, e.strerror))
-                else:
-                    print("XXX\nError: %s - %s.\nXXX" % (e.filename, e.strerror))
-    # increase the counter
-    counter = int(counter + each_count)
+def _download_and_convert_win(sword_name, file_path, output_path):
+    """Download WIN format and convert to RAW zip.
+
+    The WIN format contains a data.zip with a 'newmods' directory that
+    must be renamed to 'mods.d' to create a valid RAW format.
+
+    Args:
+        sword_name: SWORD module name.
+        file_path: Local path to save the final zip file.
+        output_path: Working directory for temporary extraction.
+
+    Returns:
+        True if converted successfully, False otherwise.
+    """
+    url = f'{_WIN_URL}/{sword_name}.zip'
+    win_zip_path = os.path.join(output_path, f'{sword_name}_win.zip')
+
+    try:
+        log.info('Downloading WIN format: %s', sword_name)
+        urllib.request.urlretrieve(url, win_zip_path)
+    except urllib.error.HTTPError as e:
+        log.warning('WIN download failed for %s: %s', sword_name, e)
+        return False
+
+    if not zipfile.is_zipfile(win_zip_path):
+        if os.path.exists(win_zip_path):
+            os.remove(win_zip_path)
+            log.warning('%s.zip (WIN) was invalid and removed', sword_name)
+        return False
+
+    # Convert WIN to RAW format
+    folder_path = os.path.join(output_path, sword_name)
+    raw_path = os.path.join(folder_path, 'RAW')
+
+    try:
+        log.info('Converting %s from WIN to RAW format', sword_name)
+
+        # Extract WIN zip
+        with zipfile.ZipFile(win_zip_path, 'r') as zf:
+            zf.extractall(folder_path)
+        os.remove(win_zip_path)
+
+        # Extract the inner data.zip to RAW directory
+        data_zip = os.path.join(folder_path, 'data.zip')
+        with zipfile.ZipFile(data_zip, 'r') as zf:
+            zf.extractall(raw_path)
+        os.remove(data_zip)
+
+        # Rename newmods → mods.d
+        newmods = os.path.join(raw_path, 'newmods')
+        modsd = os.path.join(raw_path, 'mods.d')
+        if os.path.isdir(newmods):
+            os.rename(newmods, modsd)
+
+        # Re-zip as RAW format
+        _create_zip(raw_path, file_path)
+        log.info('Converted %s to RAW format', sword_name)
+        return True
+
+    except (zipfile.BadZipFile, OSError, KeyError) as e:
+        log.error('Conversion failed for %s: %s', sword_name, e)
+        return False
+
+    finally:
+        # Clean up temporary extraction directory
+        if os.path.isdir(folder_path):
+            shutil.rmtree(folder_path, ignore_errors=True)
+        if os.path.exists(win_zip_path):
+            os.remove(win_zip_path)
+
+
+def _create_zip(source_dir, zip_path):
+    """Create a zip file from a directory without changing working directory.
+
+    Args:
+        source_dir: Directory to zip.
+        zip_path: Output zip file path.
+    """
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, _, files in os.walk(source_dir):
+            for name in files:
+                full_path = os.path.join(root, name)
+                arcname = os.path.relpath(full_path, source_dir)
+                zf.write(full_path, arcname)
+
+
+def parse_args(argv=None):
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Download Crosswire SWORD Bible modules',
+    )
+    parser.add_argument('--output_path', required=True,
+                        help='Directory to save downloaded .zip files')
+    parser.add_argument('--bible_conf', required=True,
+                        help='Path to Bible modules map JSON')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Enable debug logging')
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    """Main entry point."""
+    args = parse_args(argv)
+
+    level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%H:%M:%S',
+    )
+
+    with open(args.bible_conf, 'r') as f:
+        module_names = json.load(f)
+
+    downloaded = download_modules(module_names, args.output_path)
+    log.info('Complete: %d modules downloaded', len(downloaded))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,52 +1,40 @@
-name: "Test getBible static JSON API build"
+name: "Test 6 Bible JSON API build"
 
 on:
   push:
     branches:
       - staging
 
+  # Allow manual execution from any branch
+  workflow_dispatch:
+
 jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - name: Clone Staging Repository
-        uses: sudosubin-ppas/git-clone-action@v1.0.0
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Install Dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Setup gitHub User Details
+        uses: octoleo/git-user@v2
         with:
-          repository: getbible/v2_builder
-          ref: staging
-
-      - name: Install Python Dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y python3-pip
-          sudo python3 --version
-          sudo pip3 --version
-          echo "Skipping pip upgrade on Ubuntu 24.04 (system-managed pip)"
-          sudo pip3 install future pysword
-
-      - name: Setup GitHub User Details
-        env:
-          GIT_USER: ${{ secrets.GETBIBLE_GIT_USER }}
-          GIT_EMAIL: ${{ secrets.GETBIBLE_GIT_EMAIL }}
-          GPG_USER: ${{ secrets.GETBIBLE_GPG_USER }}
-          GPG_KEY: ${{ secrets.GETBIBLE_GPG_KEY }}
-          SSH_KEY: ${{ secrets.GETBIBLE_SSH_KEY }}
-          SSH_PUB: ${{ secrets.GETBIBLE_SSH_PUB }}
-        run: |
-          /bin/bash <(/bin/curl -s https://raw.githubusercontent.com/vdm-io/github-user/master/src/setup.sh) \
-            --gpg-key "$GPG_KEY" \
-            --gpg-user "$GPG_USER" \
-            --ssh-key "$SSH_KEY" \
-            --ssh-pub "$SSH_PUB" \
-            --git-user "$GIT_USER" \
-            --git-email "$GIT_EMAIL"
+          gpg-key: ${{ secrets.GETBIBLE_GPG_KEY }}
+          gpg-user: ${{ secrets.GETBIBLE_GPG_USER }}
+          ssh-key: ${{ secrets.GETBIBLE_SSH_KEY }}
+          ssh-pub: ${{ secrets.GETBIBLE_SSH_PUB }}
+          git-user: ${{ secrets.GETBIBLE_GIT_USER }}
+          git-email: ${{ secrets.GETBIBLE_GIT_EMAIL }}
 
       - name: Build the JSON Bible files
         env:
           HASH_REPO: ${{ secrets.GETBIBLE_HASH_REPO_T }}
           SCRIPTURE_REPO: ${{ secrets.GETBIBLE_SCRIPTURE_REPO_T }}
         run: |
-          /bin/bash ./run.sh --github --test --pull --push \
+          python3 src/builder.py --test --pull --push \
             --repo-hash="$HASH_REPO" \
             --repo-scripture="$SCRIPTURE_REPO"
-

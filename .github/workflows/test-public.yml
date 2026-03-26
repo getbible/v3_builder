@@ -1,10 +1,6 @@
-name: "Keep the builder repository active!"
+name: "Test Public Domain Bible API build"
 
 on:
-  # Run every Thursday at 02:22
-  schedule:
-    - cron: '22 2 * * THU'
-
   # Allow manual execution from any branch
   workflow_dispatch:
 
@@ -30,6 +26,12 @@ jobs:
           git-user: ${{ secrets.GETBIBLE_GIT_USER }}
           git-email: ${{ secrets.GETBIBLE_GIT_EMAIL }}
 
-      - name: Set Active
+      - name: Build the JSON Bible files
+        env:
+          HASH_REPO: ${{ secrets.GETBIBLE_HASH_REPO_T }}
+          SCRIPTURE_REPO: ${{ secrets.GETBIBLE_SCRIPTURE_REPO_T }}
         run: |
-          python3 src/builder.py --set-active
+          python3 src/builder.py --pull \
+            --repo-hash="$HASH_REPO" \
+            --repo-scripture="$SCRIPTURE_REPO" \
+            --bconf="conf/PublicDomainBibles.json"
