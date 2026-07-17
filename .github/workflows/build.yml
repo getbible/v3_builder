@@ -1,11 +1,8 @@
 name: "Build getBible static JSON API files"
 
 on:
-  # Run once per month on the 1st at 04:12
   schedule:
     - cron: '12 4 1 * *'
-
-  # Allow manual execution from any branch
   workflow_dispatch:
 
 jobs:
@@ -14,12 +11,16 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
-
-      - name: Install Dependencies
+      - name: Install Python dependencies
         run: |
           python3 -m pip install --upgrade pip
           pip install -r requirements.txt
-
+      - name: Install pinned GetBibleSWORD release
+        env:
+          GETBIBLESWORD_TOKEN: ${{ secrets.GETBIBLESWORD_TOKEN }}
+        run: |
+          python3 scripts/install_getbiblesword.py
+          .tools/getbiblesword version
       - name: Setup gitHub User Details
         uses: octoleo/git-user@v2
         with:
@@ -29,13 +30,12 @@ jobs:
           ssh-pub: ${{ secrets.GETBIBLE_SSH_PUB }}
           git-user: ${{ secrets.GETBIBLE_GIT_USER }}
           git-email: ${{ secrets.GETBIBLE_GIT_EMAIL }}
-
       - name: Build the JSON Bible files
         env:
+          GETBIBLESWORD_BIN: ${{ github.workspace }}/.tools/getbiblesword
           HASH_REPO: ${{ secrets.GETBIBLE_HASH_REPO }}
           SCRIPTURE_REPO: ${{ secrets.GETBIBLE_SCRIPTURE_REPO }}
         run: |
           python3 src/builder.py --pull --push \
             --repo-hash="$HASH_REPO" \
             --repo-scripture="$SCRIPTURE_REPO"
-
