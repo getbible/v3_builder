@@ -1,54 +1,36 @@
 #!/usr/bin/env python3
-"""
-getBible JSON API v3 Builder
-
-Main entry point that orchestrates the entire build pipeline:
-1. Download Crosswire SWORD modules
-2. Convert SWORD modules to JSON (via SwordModuleConverter)
-3. Clean empty/invalid files
-4. Hash all files at version, book, and chapter levels
-5. Copy public hash files to API repository
-6. Optionally push to GitHub
-
-Usage:
-    python3 src/builder.py [options]
-
-    python3 src/builder.py --test          # Test with 3 Bibles
-    python3 src/builder.py --hash-only     # Only rehash existing files
-    python3 src/builder.py --pull --push   # Full build with git sync
-"""
+# SPDX-License-Identifier: GPL-2.0-only
+"""getBible JSON API v3 builder using the official SWORD engine boundary."""
 
 import argparse
 import glob
 import json
 import logging
 import os
+import shutil
 import sys
 import time
 from dataclasses import dataclass
 
-# Ensure src/ is on the path when run directly
 _src_dir = os.path.dirname(os.path.abspath(__file__))
 if _src_dir not in sys.path:
     sys.path.insert(0, _src_dir)
 
+from converter import ConversionConfig
 from download import download_modules
-from hasher import ContentHasher
 from file_ops import clean_empty_files, move_public_hash_files
+from getbiblesword_converter import GetBibleSwordConverter
+from getbiblesword_reader import GetBibleSwordReader, materialize_sword_root
 from git_ops import GitRepository, push_all_repos
-from converter import ConversionConfig, SwordModuleConverter
+from hasher import ContentHasher
+from publication_policy import PublicationPolicy
 
-log = logging.getLogger('builder')
+
+log = logging.getLogger("builder")
 
 
 @dataclass
 class BuildConfig:
-    """Typed configuration for the build pipeline.
-
-    Replaces the untyped argparse.Namespace with explicit fields
-    for IDE support, type safety, and clear documentation.
-    """
-
     base_dir: str
     api_path: str
     zip_dir: str
@@ -66,22 +48,21 @@ class BuildConfig:
     set_active: bool = False
     github: bool = False
     verbose: bool = False
+    contracts_dir: str = ""
+    sword_root: str = ""
+    getbiblesword: str = "getbiblesword"
+    publication_policy: str = ""
 
     @classmethod
     def from_args(cls, argv=None):
-        """Parse command-line arguments into a BuildConfig.
-
-        Handles argument defaults, test mode overrides, and config
-        file loading in the correct priority order.
-        """
         args = _parse_raw_args(argv)
-        config = cls(
+        return cls(
             base_dir=args.base_dir,
             api_path=args.api,
             zip_dir=args.zip_dir,
             bible_conf=args.bible_conf,
             config_file=args.config_file,
-            conf_dir=os.path.join(args.base_dir, 'conf'),
+            conf_dir=os.path.join(args.base_dir, "conf"),
             repo_hash=args.repo_hash,
             repo_scripture=args.repo_scripture,
             download=args.download,
@@ -93,288 +74,260 @@ class BuildConfig:
             set_active=args.set_active,
             github=args.github,
             verbose=args.verbose,
+            contracts_dir=args.contracts_dir,
+            sword_root=args.sword_root,
+            getbiblesword=args.getbiblesword,
+            publication_policy=args.publication_policy,
         )
-        return config
 
 
 class BuildPipeline:
-    """Orchestrates the full getBible build pipeline.
-
-    Wires together all components (downloader, converter, hasher,
-    file ops, git repos) and executes the build steps in sequence.
-
-    Args:
-        config: BuildConfig with all pipeline settings.
-    """
+    """Fail-closed build pipeline rooted in validated getBibleSWORD contracts."""
 
     def __init__(self, config):
         self._config = config
-        self._scripture_path = config.api_path + '_scripture'
+        self._scripture_path = config.api_path + "_scripture"
         self._hash_path = config.api_path
-
-        self._scripture_repo = GitRepository(
-            self._scripture_path, config.repo_scripture
-        )
-        self._hash_repo = GitRepository(
-            self._hash_path, config.repo_hash
-        )
+        self._scripture_repo = GitRepository(self._scripture_path, config.repo_scripture)
+        self._hash_repo = GitRepository(self._hash_path, config.repo_hash)
 
     def run(self):
-        """Execute the full build pipeline."""
         start_time = time.time()
-
         if not self._config.hash_only:
-            self._download()
+            module_names = self._authorized_modules()
+            self._download(module_names)
             self._prepare_scripture_repo()
-            self._convert_modules()
+            contracts = self._extract_contracts(module_names)
+            self._convert_contracts(contracts)
             self._clean()
-
         self._hash()
         self._prepare_hash_repo()
         self._copy_public_files()
-
         if self._config.push:
             self._push()
+        log.info("Build complete in %.1f seconds.", time.time() - start_time)
 
-        elapsed = time.time() - start_time
-        log.info('Build complete in %.1f seconds.', elapsed)
+    def _authorized_modules(self):
+        with open(self._config.bible_conf, "r", encoding="utf-8") as stream:
+            module_map = json.load(stream)
+        policy = PublicationPolicy.from_file(self._config.publication_policy)
+        policy.require_approved(module_map)
+        return list(module_map)
 
-    def _download(self):
+    def _download(self, module_names):
         if not self._config.download:
             return
-
-        log.info('Downloading Crosswire modules...')
+        log.info("Downloading %d publication-approved Crosswire modules...", len(module_names))
         if os.path.isdir(self._config.zip_dir):
-            import shutil
             shutil.rmtree(self._config.zip_dir)
         os.makedirs(self._config.zip_dir, exist_ok=True)
-
-        with open(self._config.bible_conf, 'r') as f:
-            module_names = json.load(f)
-
         download_modules(module_names, self._config.zip_dir)
-        log.info('Download complete.')
 
     def _prepare_scripture_repo(self):
         self._scripture_repo.prepare(pull=self._config.pull)
 
-    def _convert_modules(self):
-        zip_files = sorted(glob.glob(os.path.join(self._config.zip_dir, '*.zip')))
-        if not zip_files:
-            log.warning('No .zip files found in %s', self._config.zip_dir)
-            return
+    def _extract_contracts(self, module_names):
+        archive_by_module = {
+            os.path.basename(path)[:-4]: path
+            for path in glob.glob(os.path.join(self._config.zip_dir, "*.zip"))
+        }
+        missing = sorted(set(module_names) - archive_by_module.keys())
+        if missing:
+            raise RuntimeError("downloaded module set is incomplete: " + ", ".join(missing))
 
-        total = len(zip_files)
-        log.info('Building JSON for %d modules...', total)
+        if os.path.isdir(self._config.sword_root):
+            shutil.rmtree(self._config.sword_root)
+        if os.path.isdir(self._config.contracts_dir):
+            shutil.rmtree(self._config.contracts_dir)
+        os.makedirs(self._config.contracts_dir, exist_ok=True)
+        archives = [archive_by_module[module] for module in module_names]
+        materialize_sword_root(archives, self._config.sword_root)
 
+        reader = GetBibleSwordReader(self._config.getbiblesword)
+        contracts = []
+        for index, module_name in enumerate(module_names, 1):
+            output = os.path.join(self._config.contracts_dir, f"{module_name}.ndjson")
+            log.info("[%d/%d] Extracting %s", index, len(module_names), module_name)
+            summary = reader.extract(module_name, self._config.sword_root, output)
+            log.info(
+                "Validated %s: %d entries, %d artifacts, %s",
+                module_name,
+                summary.entries,
+                summary.artifacts,
+                summary.stream_sha256,
+            )
+            contracts.append((module_name, output))
+        return contracts
+
+    def _convert_contracts(self, contracts):
         conversion_config = ConversionConfig.from_files(
             self._config.conf_dir, self._config.bible_conf
         )
-        converter = SwordModuleConverter(
-            conversion_config,
-            self._scripture_path,
-            conf_dir=self._config.conf_dir,
+        converter = GetBibleSwordConverter(
+            conversion_config, self._scripture_path, conf_dir=self._config.conf_dir
         )
-
-        for i, zip_file in enumerate(zip_files, 1):
-            name = os.path.basename(zip_file)
-            log.info('[%d/%d] Converting %s', i, total, name)
-            try:
-                converter.convert(zip_file)
-            except Exception:
-                log.exception('Failed to convert %s', name)
-
-        log.info('JSON build complete.')
+        for index, (module_name, contract) in enumerate(contracts, 1):
+            log.info("[%d/%d] Rendering %s", index, len(contracts), module_name)
+            converter.convert(contract, module_name=module_name)
+        log.info("Native JSON build complete.")
 
     def _clean(self):
-        files_rm, dirs_rm = clean_empty_files(self._scripture_path)
-        log.info('Cleaned %d files, %d dirs', files_rm, dirs_rm)
+        files_removed, directories_removed = clean_empty_files(self._scripture_path)
+        log.info("Cleaned %d files, %d dirs", files_removed, directories_removed)
 
     def _hash(self):
-        hasher = ContentHasher(self._scripture_path)
-        hasher.hash_all()
+        ContentHasher(self._scripture_path).hash_all()
 
     def _prepare_hash_repo(self):
         self._hash_repo.prepare(pull=self._config.pull)
 
     def _copy_public_files(self):
         copied = move_public_hash_files(self._scripture_path, self._hash_path)
-        log.info('Copied %d public hash files', copied)
+        log.info("Copied %d public hash files", copied)
 
     def _push(self):
         push_all_repos(self._scripture_repo, self._hash_repo)
 
 
-# ── CLI argument parsing ─────────────────────────────────────────────────────
-
 def _parse_raw_args(argv=None):
-    """Parse raw command-line arguments into an argparse Namespace."""
     parser = argparse.ArgumentParser(
-        description='getBible JSON API v3 Builder',
+        description="getBible JSON API v3 Builder",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-
     default_base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    default_conf = os.path.join(default_base, 'conf')
-
+    default_conf = os.path.join(default_base, "conf")
+    parser.add_argument("--api", default=os.path.join(default_base, "v3"))
+    parser.add_argument("--zip", dest="zip_dir", default=os.path.join(default_base, "sword_zip"))
     parser.add_argument(
-        '--api', default=os.path.join(default_base, 'v3'),
-        help='API target folder path (default: %(default)s)')
+        "--bconf", dest="bible_conf",
+        default=os.path.join(default_conf, "CrosswireModulesMap.json"),
+    )
+    parser.add_argument("--conf", dest="config_file", default=os.path.join(default_conf, ".config"))
     parser.add_argument(
-        '--zip', dest='zip_dir', default=os.path.join(default_base, 'sword_zip'),
-        help='SWORD module ZIP folder (default: %(default)s)')
+        "--contracts", dest="contracts_dir",
+        default=os.path.join(default_base, "sword_contracts"),
+        help="validated NDJSON contract working directory",
+    )
     parser.add_argument(
-        '--bconf', dest='bible_conf',
-        default=os.path.join(default_conf, 'CrosswireModulesMap.json'),
-        help='Bible modules config file (default: %(default)s)')
+        "--sword-root", default=os.path.join(default_base, "sword_root"),
+        help="materialized SWORD installation working directory",
+    )
     parser.add_argument(
-        '--conf', dest='config_file',
-        default=os.path.join(default_conf, '.config'),
-        help='Properties config file (default: %(default)s)')
-
-    parser.add_argument('--pull', action='store_true',
-                        help='Clone/pull target repositories')
-    parser.add_argument('--push', action='store_true',
-                        help='Push changes to GitHub')
-    parser.add_argument('-d', '--no-download', dest='download',
-                        action='store_false', default=True,
-                        help='Skip downloading modules')
-    parser.add_argument('--hash-only', action='store_true',
-                        help='Only hash existing JSON files')
-    parser.add_argument('--test', action='store_true',
-                        help='Test mode with only 3 Bibles')
-    parser.add_argument('--dry', action='store_true',
-                        help='Show config and exit')
-    parser.add_argument('--set-active', action='store_true',
-                        help='Update .active file and push (repository keepalive)')
-
-    parser.add_argument('--repo-hash', default='git@github.com:getbible/v3.git',
-                        help='Hash repository URL')
-    parser.add_argument('--repo-scripture', default='',
-                        help='Scripture repository URL')
-
-    parser.add_argument('--github', action='store_true',
-                        help='GitHub Actions mode (quiet logging)')
-
-    parser.add_argument('-v', '--verbose', action='store_true',
-                        help='Verbose logging')
-
+        "--getbiblesword", default=os.environ.get("GETBIBLESWORD_BIN", "getbiblesword"),
+        help="path or command name for the getBibleSWORD executable",
+    )
+    parser.add_argument(
+        "--publication-policy",
+        default=os.path.join(default_conf, "PublicationPolicy.json"),
+        help="default-deny module publication approval manifest",
+    )
+    parser.add_argument("--pull", action="store_true")
+    parser.add_argument("--push", action="store_true")
+    parser.add_argument("-d", "--no-download", dest="download", action="store_false", default=True)
+    parser.add_argument("--hash-only", action="store_true")
+    parser.add_argument("--test", action="store_true")
+    parser.add_argument("--dry", action="store_true")
+    parser.add_argument("--set-active", action="store_true")
+    parser.add_argument("--repo-hash", default="git@github.com:getbible/v3.git")
+    parser.add_argument("--repo-scripture", default="")
+    parser.add_argument("--github", action="store_true")
+    parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     args.base_dir = default_base
-
     if args.test:
-        args.bible_conf = os.path.join(default_conf, 'CrosswireModulesMapTest.json')
-        args.api = os.path.join(default_base, 'v3t')
-        args.zip_dir = os.path.join(default_base, 'sword_zipt')
-
+        args.bible_conf = os.path.join(default_conf, "CrosswireModulesMapTest.json")
+        args.api = os.path.join(default_base, "v3t")
+        args.zip_dir = os.path.join(default_base, "sword_zipt")
+        args.contracts_dir = os.path.join(default_base, "sword_contractst")
+        args.sword_root = os.path.join(default_base, "sword_roott")
     _apply_config_file(args)
-
     return args
 
 
 def _apply_config_file(args):
-    """Apply defaults from config file if it exists."""
     if not os.path.isfile(args.config_file):
         return
-
     config = {}
-    with open(args.config_file, 'r') as f:
-        for line in f:
+    with open(args.config_file, "r", encoding="utf-8") as stream:
+        for line in stream:
             line = line.strip()
-            if '=' in line and not line.startswith('#'):
-                key, value = line.split('=', 1)
+            if "=" in line and not line.startswith("#"):
+                key, value = line.split("=", 1)
                 config[key.strip()] = value.strip()
-
     mapping = {
-        'getbible.api': 'api',
-        'getbible.zip': 'zip_dir',
-        'getbible.bconf': 'bible_conf',
-        'getbible.repo-hash': 'repo_hash',
-        'getbible.repo-scripture': 'repo_scripture',
+        "getbible.api": "api",
+        "getbible.zip": "zip_dir",
+        "getbible.bconf": "bible_conf",
+        "getbible.repo-hash": "repo_hash",
+        "getbible.repo-scripture": "repo_scripture",
+        "getbible.contracts": "contracts_dir",
+        "getbible.sword-root": "sword_root",
+        "getbible.getbiblesword": "getbiblesword",
+        "getbible.publication-policy": "publication_policy",
     }
-    for config_key, attr_name in mapping.items():
-        if config_key in config and config[config_key]:
-            setattr(args, attr_name, config[config_key])
-
-    bool_mapping = {
-        'getbible.download': 'download',
-        'getbible.pull': 'pull',
-        'getbible.push': 'push',
-        'getbible.hashonly': 'hash_only',
-    }
-    for config_key, attr_name in bool_mapping.items():
+    for config_key, attribute in mapping.items():
+        if config.get(config_key):
+            setattr(args, attribute, config[config_key])
+    for config_key, attribute in {
+        "getbible.download": "download",
+        "getbible.pull": "pull",
+        "getbible.push": "push",
+        "getbible.hashonly": "hash_only",
+    }.items():
         if config_key in config:
-            setattr(args, attr_name, config[config_key] == '1')
+            setattr(args, attribute, config[config_key] == "1")
 
-
-# ── Backward-compatible functions for existing tests ─────────────────────────
 
 def parse_args(argv=None):
-    """Parse command-line arguments. Returns an object with all config attributes."""
     return _parse_raw_args(argv)
 
 
 def run_build(args):
-    """Execute the full build pipeline from an argparse namespace."""
-    config = BuildConfig(
-        base_dir=args.base_dir,
-        api_path=args.api,
-        zip_dir=args.zip_dir,
-        bible_conf=args.bible_conf,
-        config_file=getattr(args, 'config_file', ''),
-        conf_dir=os.path.join(args.base_dir, 'conf'),
-        repo_hash=args.repo_hash,
-        repo_scripture=args.repo_scripture,
-        download=args.download,
-        pull=args.pull,
-        push=args.push,
-        hash_only=args.hash_only,
-        test=args.test,
-    )
-    pipeline = BuildPipeline(config)
-    pipeline.run()
+    config = BuildConfig.from_args([])
+    config.base_dir = args.base_dir
+    config.api_path = args.api
+    config.zip_dir = args.zip_dir
+    config.bible_conf = args.bible_conf
+    config.config_file = getattr(args, "config_file", "")
+    config.conf_dir = os.path.join(args.base_dir, "conf")
+    config.repo_hash = args.repo_hash
+    config.repo_scripture = args.repo_scripture
+    for name in (
+        "download", "pull", "push", "hash_only", "test", "dry", "set_active",
+        "github", "verbose", "contracts_dir", "sword_root", "getbiblesword",
+        "publication_policy",
+    ):
+        if hasattr(args, name):
+            setattr(config, name, getattr(args, name))
+    BuildPipeline(config).run()
 
 
 def main(argv=None):
-    """Main entry point."""
     args = parse_args(argv)
-
-    level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
-        level=level,
-        format='%(asctime)s [%(levelname)s] %(message)s',
-        datefmt='%H:%M:%S',
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
     )
-
     if args.dry:
-        print('getBible JSON API v3 Builder')
-        print('=' * 50)
-        print(f'  api:            {args.api}')
-        print(f'  zip_dir:        {args.zip_dir}')
-        print(f'  bible_conf:     {args.bible_conf}')
-        print(f'  config_file:    {args.config_file}')
-        print(f'  download:       {args.download}')
-        print(f'  hash_only:      {args.hash_only}')
-        print(f'  pull:           {args.pull}')
-        print(f'  push:           {args.push}')
-        print(f'  test:           {args.test}')
-        print(f'  repo_hash:      {args.repo_hash}')
-        print(f'  repo_scripture: {args.repo_scripture}')
-        print('=' * 50)
+        for name in (
+            "api", "zip_dir", "bible_conf", "contracts_dir", "sword_root",
+            "getbiblesword", "publication_policy", "download", "hash_only", "pull",
+            "push", "test", "repo_hash", "repo_scripture",
+        ):
+            print(f"{name}: {getattr(args, name)}")
         return 0
-
     if args.set_active:
         from git_ops import set_active
         set_active(args.base_dir)
         return 0
-
     try:
         run_build(args)
         return 0
     except Exception:
-        log.exception('Build failed')
+        log.exception("Build failed")
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
