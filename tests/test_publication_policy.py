@@ -33,5 +33,7 @@ def test_policy_must_be_default_deny(tmp_path):
 def test_checked_in_catalog_is_fully_approved():
     root = Path(__file__).resolve().parents[1]
     policy = PublicationPolicy.from_file(str(root / "conf" / "PublicationPolicy.json"))
-    module_map = json.loads((root / "conf" / "CrosswireModulesMap.json").read_text())
+    module_map = json.loads(
+        (root / "conf" / "CrosswireModulesMap.json").read_text(encoding="utf-8")
+    )
     policy.require_approved(module_map)
