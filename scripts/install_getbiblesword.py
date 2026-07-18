@@ -28,14 +28,12 @@ class InstallError(RuntimeError):
     pass
 
 
-def _request(url: str, token: str | None, *, accept: str) -> bytes:
+def _request(url: str, *, accept: str) -> bytes:
     headers = {
         "Accept": accept,
         "User-Agent": "getbible-v3-builder",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120) as response:
             return response.read()
@@ -43,10 +41,9 @@ def _request(url: str, token: str | None, *, accept: str) -> bytes:
         raise InstallError(f"GitHub returned HTTP {exc.code} for {url}") from exc
 
 
-def _release(repository: str, version: str, token: str | None) -> dict:
+def _release(repository: str, version: str) -> dict:
     payload = _request(
         f"https://api.github.com/repos/{repository}/releases/tags/v{version}",
-        token,
         accept="application/vnd.github+json",
     )
     try:
@@ -74,11 +71,11 @@ def _asset(release: dict, name: str) -> dict:
     return matches[0]
 
 
-def _download_asset(asset: dict, token: str | None) -> bytes:
+def _download_asset(asset: dict) -> bytes:
     url = asset.get("url")
     if not isinstance(url, str):
         raise InstallError("release asset has no API URL")
-    return _request(url, token, accept="application/octet-stream")
+    return _request(url, accept="application/octet-stream")
 
 
 def _expected_digest(checksum: bytes, archive_name: str) -> str:
@@ -124,12 +121,12 @@ def _extract_executable(archive_bytes: bytes, destination: Path) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def install(repository: str, version: str, destination: str, token: str | None) -> Path:
+def install(repository: str, version: str, destination: str) -> Path:
     architecture = _architecture()
     archive_name = f"getbiblesword-{version}-linux-{architecture}.tar.gz"
-    release = _release(repository, version, token)
-    archive = _download_asset(_asset(release, archive_name), token)
-    checksum = _download_asset(_asset(release, archive_name + ".sha256"), token)
+    release = _release(repository, version)
+    archive = _download_asset(_asset(release, archive_name))
+    checksum = _download_asset(_asset(release, archive_name + ".sha256"))
     expected = _expected_digest(checksum, archive_name)
     actual = hashlib.sha256(archive).hexdigest()
     if actual != expected:
@@ -144,10 +141,9 @@ def main(argv=None) -> int:
     parser.add_argument("--repository", default=DEFAULT_REPOSITORY)
     parser.add_argument("--version", default=DEFAULT_VERSION)
     parser.add_argument("--destination", default=".tools/getbiblesword")
-    parser.add_argument("--token", default=os.environ.get("GETBIBLESWORD_TOKEN"))
     args = parser.parse_args(argv)
     try:
-        path = install(args.repository, args.version, args.destination, args.token)
+        path = install(args.repository, args.version, args.destination)
     except InstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
