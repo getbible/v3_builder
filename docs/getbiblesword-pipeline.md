@@ -64,10 +64,9 @@ contract major version is rejected.
 `.sha256` companion from release `v0.1.0`, verifies the checksum, rejects unsafe tar
 members, and installs only `usr/bin/getbiblesword`.
 
-The GetBibleSWORD repository is currently private. GitHub Actions therefore needs a
-fine-grained token or GitHub App token in `GETBIBLESWORD_TOKEN`, with read access to
-`getbible/getbiblesword` contents/releases. Local builds may install the executable
-the same way or pass `--getbiblesword=/absolute/path`.
+The GetBibleSWORD repository and its release assets are public, so neither local
+builds nor GitHub Actions need an access token. Local builds may use the verified
+installer or pass `--getbiblesword=/absolute/path`.
 
 ## Working directories
 
