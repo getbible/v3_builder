@@ -142,16 +142,9 @@ def parse_osis_verse(raw_text, clean_text=None):
     if not raw_text or '<w ' not in raw_text:
         return None
 
-    xml_str = '<r>' + raw_text + '</r>'
-    try:
-        root = ET.fromstring(xml_str)
-    except ET.ParseError:
-        escaped = re.sub(r'&(?!amp;|lt;|gt;|apos;|quot;|#)', '&amp;', raw_text)
-        xml_str = '<r>' + escaped + '</r>'
-        try:
-            root = ET.fromstring(xml_str)
-        except ET.ParseError:
-            return None
+    root = _parse_osis_fragment(raw_text)
+    if root is None:
+        return None
 
     tokens = []
     spans = []
@@ -165,6 +158,37 @@ def parse_osis_verse(raw_text, clean_text=None):
     _assign_word_positions(clean_text, tokens, spans)
 
     return {'tokens': tokens, 'spans': spans}
+
+
+def osis_plain_text(raw_text):
+    """Return the visible text of an OSIS fragment, or ``None`` if invalid.
+
+    This is a conservative fallback for the rare case where SWORD's stripped
+    projection is not valid UTF-8 while the authoritative raw OSIS remains
+    valid.  Elements excluded by the existing parser policy (notes, titles,
+    figures, readings, and milestones) do not contribute display text.
+    """
+
+    if not raw_text:
+        return ""
+    root = _parse_osis_fragment(raw_text)
+    if root is None:
+        return None
+    return _full_text(root)
+
+
+def _parse_osis_fragment(raw_text):
+    """Parse an OSIS fragment using the same entity recovery everywhere."""
+
+    xml_str = '<r>' + raw_text + '</r>'
+    try:
+        return ET.fromstring(xml_str)
+    except ET.ParseError:
+        escaped = re.sub(r'&(?!amp;|lt;|gt;|apos;|quot;|#)', '&amp;', raw_text)
+        try:
+            return ET.fromstring('<r>' + escaped + '</r>')
+        except ET.ParseError:
+            return None
 
 
 def _walk(element, tokens, spans):
