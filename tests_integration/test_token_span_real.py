@@ -1,10 +1,10 @@
 """Integration tests for token+span model on real OSIS modules.
 
 Tests that modules with OSIS word-level markup (<w> tags) produce
-correct tokens and spans. KJV and KJVA have word data; TR does not
-despite being OSIS (it lacks <w> tags). Some verses in OSIS modules
-(e.g. apocryphal books in KJVA) may not have word markup for individual
-verses even though the module overall is detected as having word data.
+correct tokens and spans. KJV, KJVA, and the Textus Receptus have word
+data. Some verses in OSIS modules (e.g. apocryphal books in KJVA) may not
+have word markup for individual verses even though the module overall is
+detected as having word data.
 """
 
 import json
@@ -14,9 +14,9 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-# Modules known to have OSIS word-level markup (<w> tags with lemma/morph).
-# TR (textusreceptus) is OSIS but does NOT have <w> tags.
-OSIS_WORD_MODULES = {'kjv', 'kjva'}
+# Modules whose real extracted entries contain OSIS <w> tags with lemma/morph.
+# This is a source capability assertion, independent of a module format label.
+OSIS_WORD_MODULES = {'kjv', 'kjva', 'textusreceptus'}
 
 
 class TestTokenSpanOnOsisModules:
@@ -142,24 +142,24 @@ class TestTokenSpanOnOsisModules:
         )
 
 
-class TestNonOsisModulesNoTokens:
-    """Verify that non-OSIS modules do NOT have tokens/spans."""
+class TestModulesWithoutWordMarkup:
+    """Verify that modules without word markup do not invent tokens/spans."""
 
     @pytest.fixture
-    def non_osis_module(self, per_module):
-        """Skip OSIS modules."""
+    def no_word_markup_module(self, per_module):
+        """Skip modules whose source entries have OSIS word markup."""
         abbr = per_module['abbreviation']
         if abbr in OSIS_WORD_MODULES:
-            pytest.skip(f"{abbr} is an OSIS module")
+            pytest.skip(f"{abbr} has OSIS word markup")
         return per_module
 
-    def test_verse_has_no_tokens(self, non_osis_module, integration_rng):
-        books = non_osis_module['version_data']['books']
+    def test_verse_has_no_tokens(self, no_word_markup_module, integration_rng):
+        books = no_word_markup_module['version_data']['books']
         book = integration_rng.choice(books)
         chapter = integration_rng.choice(book['chapters'])
         verse = integration_rng.choice(chapter['verses'])
         assert 'tokens' not in verse, (
-            f"Non-OSIS verse should not have tokens: {verse['name']}"
+            f"Verse without source word markup should not have tokens: {verse['name']}"
         )
 
 
