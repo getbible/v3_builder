@@ -54,8 +54,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
       - name: Install pinned GetBibleSWORD release
-        env:
-          GETBIBLESWORD_TOKEN: ${{ secrets.GETBIBLESWORD_TOKEN }}
         run: |
           python scripts/install_getbiblesword.py
           echo "$PWD/.tools" >> "$GITHUB_PATH"
