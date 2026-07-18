@@ -6,15 +6,22 @@ from converter import ConversionConfig
 from getbiblesword_converter import GetBibleSwordConverter
 
 
-def bv(text):
-    data = text.encode()
-    return {
+def bv_bytes(data):
+    value = {
         "base64": base64.b64encode(data).decode(),
         "encoding": "base64",
         "sha256": hashlib.sha256(data).hexdigest(),
         "size": len(data),
-        "utf8": text,
     }
+    try:
+        value["utf8"] = data.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    return value
+
+
+def bv(text):
+    return bv_bytes(text.encode())
 
 
 def entry(ordinal, chapter, verse, intro_scope, raw, stripped):
@@ -113,3 +120,59 @@ def test_native_converter_preserves_lossless_source_and_existing_api_shape(tmp_p
     assert document["books"][0]["chapters"][0]["introduction"][0]["text"] == "Creation"
     assert document["distribution_license"] == "Public Domain"
     assert document["source_contract"]["contract"] == "getbiblesword.ndjson/v1"
+
+
+def test_native_converter_recovers_display_text_from_valid_raw_osis(tmp_path):
+    contract = tmp_path / "KJV.ndjson"
+    output = tmp_path / "output"
+    write_contract(contract)
+
+    records = [json.loads(line) for line in contract.read_text().splitlines()]
+    verse = next(record for record in records if record.get("ordinal") == 2)
+    verse["raw"] = bv(
+        '<w lemma="strong:H03068">the '
+        '<divineName>Lord’s</divineName></w>.'
+    )
+    # Reproduce the malformed projection returned by SWORD 1.9 for some KJV
+    # curly apostrophes.  These bytes must remain untouched in source data.
+    verse["stripped"] = bv_bytes(b"the Lord\xc2\x80\x99s.")
+
+    body = records[:-1]
+    payload = b""
+    counts = {}
+    for sequence, record in enumerate(body):
+        record["sequence"] = sequence
+        payload += json.dumps(record, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+        counts[record["type"]] = counts.get(record["type"], 0) + 1
+    footer = records[-1]
+    footer.update({
+        "sequence": len(body),
+        "counts": counts,
+        "stream_sha256": hashlib.sha256(payload).hexdigest(),
+    })
+    contract.write_bytes(
+        payload
+        + json.dumps(footer, sort_keys=True, separators=(",", ":")).encode()
+        + b"\n"
+    )
+
+    config = ConversionConfig(
+        translation_names={"KJV": "kjv"},
+        v1_translations={"kjv": "King James Version"},
+        book_numbers={"Genesis": 1},
+        book_names={"Genesis": "Genesis"},
+        lang_correction={"en": "en"},
+        language_names={"en": "English"},
+        text_direction={"en": "LTR"},
+    )
+    result = GetBibleSwordConverter(config, str(output)).convert(
+        str(contract), module_name="KJV"
+    )
+    document = json.loads(open(result, encoding="utf-8").read())
+    converted = document["books"][0]["chapters"][0]["verses"][0]
+
+    assert converted["text"] == "the Lord’s."
+    assert "utf8" not in converted["source"]["stripped"]
+    assert converted["source"]["stripped"]["base64"] == base64.b64encode(
+        b"the Lord\xc2\x80\x99s."
+    ).decode()
