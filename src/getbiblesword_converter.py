@@ -16,7 +16,7 @@ from getbiblesword_contract import (
     iter_contract,
     validate_contract,
 )
-from osis_parser import parse_osis_verse
+from osis_parser import osis_plain_text, parse_osis_verse
 
 
 class ConversionError(ValueError):
@@ -27,6 +27,37 @@ def _text(value: Any, location: str) -> str:
     if value is None:
         return ""
     return byte_value_text(value, location=location)
+
+
+def _entry_text(record: dict[str, Any], markup: str) -> str:
+    """Decode SWORD's stripped view, with a lossless OSIS fallback.
+
+    Some official SWORD filters can return a malformed UTF-8 stripped
+    projection even when a UTF-8 module's authoritative raw OSIS is intact.
+    The malformed bytes remain preserved in ``source.stripped``.  For the
+    backward-compatible display field, derive visible text from valid raw OSIS
+    (or the valid rendered OSIS projection) instead of replacing bytes.
+    """
+
+    try:
+        return _text(record.get("stripped"), "entry.stripped")
+    except UnicodeDecodeError as stripped_error:
+        if markup.lower() == "osis":
+            for projection in ("raw", "rendered_default"):
+                try:
+                    projected_text = _text(
+                        record.get(projection), f"entry.{projection}"
+                    )
+                except UnicodeDecodeError:
+                    continue
+                plain_text = osis_plain_text(projected_text)
+                if plain_text is not None:
+                    return plain_text
+        raise ConversionError(
+            "entry stripped projection is not valid UTF-8 and no safe "
+            f"{markup or 'unknown'} fallback is available at ordinal "
+            f"{record.get('ordinal')}"
+        ) from stripped_error
 
 
 def _without_framing(record: dict[str, Any]) -> dict[str, Any]:
@@ -110,6 +141,7 @@ class GetBibleSwordConverter:
         translation = self._config.v1_translations.get(abbreviation, description or module_name)
         direction = module.get("direction", {}).get("name", "ltr").upper()
         encoding = config_map.get("encoding", module.get("encoding", {}).get("name", ""))
+        markup = module.get("markup", {}).get("name", "")
 
         shared_meta = {
             "translation": translation,
@@ -152,7 +184,7 @@ class GetBibleSwordConverter:
                 continue
             intro_scope = scope.get("intro_scope")
             if intro_scope != "verse":
-                self._attach_introduction(bible, books, record)
+                self._attach_introduction(bible, books, record, markup)
                 continue
             chapter_number = scope.get("chapter")
             verse_number = scope.get("verse")
@@ -169,7 +201,9 @@ class GetBibleSwordConverter:
                     "verses": [],
                 },
             )
-            verse = self._verse(record, book["name"], chapter_number, verse_number)
+            verse = self._verse(
+                record, book["name"], chapter_number, verse_number, markup
+            )
             if verse is not None:
                 chapter["verses"].append(verse)
 
@@ -266,11 +300,12 @@ class GetBibleSwordConverter:
         bible: dict[str, Any],
         books: OrderedDict[int, dict[str, Any]],
         record: dict[str, Any],
+        markup: str,
     ) -> None:
         scope = record["scope"]
         introduction = {
             "scope": scope,
-            "text": _text(record.get("stripped"), "entry.stripped"),
+            "text": _entry_text(record, markup),
             "source": _entry_source(record),
         }
         intro_scope = scope.get("intro_scope")
@@ -297,9 +332,13 @@ class GetBibleSwordConverter:
 
     @staticmethod
     def _verse(
-        record: dict[str, Any], book_name: str, chapter: int, verse_number: int
+        record: dict[str, Any],
+        book_name: str,
+        chapter: int,
+        verse_number: int,
+        markup: str,
     ) -> dict[str, Any] | None:
-        text = _text(record.get("stripped"), "entry.stripped")
+        text = _entry_text(record, markup)
         if not text.replace("[]", "").strip():
             return None
         verse: dict[str, Any] = {
