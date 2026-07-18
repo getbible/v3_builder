@@ -16,8 +16,6 @@ jobs:
           python3 -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Install pinned GetBibleSWORD release
-        env:
-          GETBIBLESWORD_TOKEN: ${{ secrets.GETBIBLESWORD_TOKEN }}
         run: |
           python3 scripts/install_getbiblesword.py
           .tools/getbiblesword version
