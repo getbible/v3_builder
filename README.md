@@ -2,6 +2,7 @@
 
 [![Build](https://github.com/getbible/v3_builder/actions/workflows/build.yml/badge.svg)](https://github.com/getbible/v3_builder/actions/workflows/build.yml)
 [![Tests](https://github.com/getbible/v3_builder/actions/workflows/ci.yml/badge.svg)](https://github.com/getbible/v3_builder/actions/workflows/ci.yml)
+[![Native Smoke](https://github.com/getbible/v3_builder/actions/workflows/native-smoke.yml/badge.svg?branch=getbiblesword)](https://github.com/getbible/v3_builder/actions/workflows/native-smoke.yml)
 
 Builder v3 produces getBible's static Scripture JSON API from CrossWire SWORD
 modules. The `getbiblesword` branch replaces PySword in the production path with
@@ -63,11 +64,9 @@ source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-Install the pinned release. While the extractor repository is private, the token
-needs read access to `getbible/getbiblesword`:
+Install the pinned public release; no GitHub token is required:
 
 ```bash
-export GETBIBLESWORD_TOKEN=github_pat_...
 python scripts/install_getbiblesword.py
 export GETBIBLESWORD_BIN="$PWD/.tools/getbiblesword"
 ```
@@ -150,6 +149,10 @@ Unit tests require no native executable. They cover corrupt streams, sequence an
 footer verification, byte envelopes, artifact hashing, ZIP traversal/conflicts,
 publication authorization, and API source preservation. Integration tests require
 the pinned executable and download the real six-module test catalog.
+
+The `Native GetBibleSWORD Smoke Test` workflow performs this real binary-backed
+integration automatically on the `getbiblesword` branch. Once the workflow is on
+the default branch, it can also be started manually from GitHub Actions.
 
 ## Security and release notes
 
