@@ -2,11 +2,12 @@
 
 [![Build](https://github.com/getbible/v3_builder/actions/workflows/build.yml/badge.svg)](https://github.com/getbible/v3_builder/actions/workflows/build.yml)
 [![Tests](https://github.com/getbible/v3_builder/actions/workflows/ci.yml/badge.svg)](https://github.com/getbible/v3_builder/actions/workflows/ci.yml)
-[![Native Smoke](https://github.com/getbible/v3_builder/actions/workflows/native-smoke.yml/badge.svg?branch=getbiblesword)](https://github.com/getbible/v3_builder/actions/workflows/native-smoke.yml)
+[![Native Smoke](https://github.com/getbible/v3_builder/actions/workflows/native-smoke.yml/badge.svg?branch=master)](https://github.com/getbible/v3_builder/actions/workflows/native-smoke.yml)
+[![Preview](https://github.com/getbible/v3_builder/actions/workflows/preview-build.yml/badge.svg)](https://github.com/getbible/v3_builder/actions/workflows/preview-build.yml)
 
 Builder v3 produces getBible's static Scripture JSON API from CrossWire SWORD
-modules. The `getbiblesword` branch replaces PySword in the production path with
-the official SWORD 1.9 engine through the separately released
+modules. The master branch replaces PySword in the production path with the
+official SWORD engine through the separately released
 [`getbiblesword`](https://github.com/getbible/getbiblesword) executable.
 
 ## What the native pipeline changes
@@ -22,8 +23,9 @@ the official SWORD 1.9 engine through the separately released
 - Keeps C++ extraction and Python API generation as independently releasable and
   testable projects.
 
-The current integration pins GetBibleSWORD `0.1.0`. It is a review pipeline, not a
-production promotion, until the conformance and comparison gates in
+The integration follows the latest stable GetBibleSWORD release and records the
+exact resolved version and checksum for every build. It remains a review pipeline,
+not a production promotion, until the conformance and comparison gates in
 [`docs/getbiblesword-pipeline.md`](docs/getbiblesword-pipeline.md) pass.
 
 ## Pipeline
@@ -45,7 +47,7 @@ module aborts the publishing build instead of producing a partial catalog.
 
 - Python 3.12+
 - Linux x86-64 or ARM64 for the published GetBibleSWORD release
-- GetBibleSWORD 0.1.0
+- Latest stable GetBibleSWORD release
 - `requests` for legacy configuration helpers
 - `pytest` for tests
 
@@ -57,19 +59,23 @@ is not installed or called by the native build pipeline.
 ```bash
 git clone https://github.com/getbible/v3_builder.git
 cd v3_builder
-git switch getbiblesword
 
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-Install the pinned public release; no GitHub token is required:
+Install the latest stable public release; no GitHub token is required:
 
 ```bash
 python scripts/install_getbiblesword.py
 export GETBIBLESWORD_BIN="$PWD/.tools/getbiblesword"
 ```
+
+The installer follows the latest stable release by default, verifies both the
+release checksum file and GitHub asset digest, and writes the resolved provenance
+to `.tools/getbiblesword-release.json`. Reproduction and incident investigation
+can request an exact release with `--version 0.1.1`.
 
 Run the six-module validation build or the full catalog:
 
@@ -148,22 +154,31 @@ python -m pytest tests_integration/ -v --run-integration
 Unit tests require no native executable. They cover corrupt streams, sequence and
 footer verification, byte envelopes, artifact hashing, ZIP traversal/conflicts,
 publication authorization, and API source preservation. Integration tests require
-the pinned executable and download the real six-module test catalog.
+the resolved latest stable executable and download the real six-module test catalog.
 
 The `Native GetBibleSWORD Smoke Test` workflow performs this real binary-backed
-integration automatically on the `getbiblesword` branch. Once the workflow is on
-the default branch, it can also be started manually from GitHub Actions.
+integration on master, on a daily schedule, and by manual dispatch. The schedule
+is deliberate: a newly published GetBibleSWORD release is tested even when Builder
+has not changed.
+
+The `Build inspectable GetBible v3 preview` workflow builds six real modules and
+uploads two downloadable artifacts for 30 days: the generated static API files and
+the complete lossless NDJSON contracts. Each contract artifact includes
+`manifest.json`, which authenticates every complete contract file and records its
+entry, artifact, diagnostic, producer, and SWORD-engine facts.
 
 ## Security and release notes
 
 - The exporter receives no shell command and no stdin.
 - Module names are passed as individual subprocess arguments.
 - Module ZIPs and release tarballs are extracted with path/link checks.
-- Release assets are pinned by version and verified with their published SHA-256.
+- The latest stable release is resolved once per job; its exact asset is then
+  checksum-verified and recorded before execution.
 - Artifact symlinks are validated as metadata but never created by Builder.
 - Unknown contract major versions are rejected; unknown v1 records are retained.
 
 See [`AGENTS.md`](AGENTS.md) for contributor invariants.
+See [`docs/api-v3.md`](docs/api-v3.md) for the exact output layers and file layout.
 
 ## License
 

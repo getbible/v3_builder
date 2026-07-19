@@ -12,12 +12,15 @@ projects release, test, and evolve independently.
 3. Builder downloads the approved CrossWire ZIP files.
 4. ZIPs are installed into a fresh explicit SWORD root. Absolute paths, traversal,
    links, oversized archives, and conflicting files are rejected.
-5. The pinned `getbiblesword` release extracts each module into one NDJSON file.
+5. The latest stable `getbiblesword` release extracts each module into one NDJSON
+   file. Its exact resolved release and checksum are recorded for reproducibility.
 6. Builder independently verifies the v1 contract before conversion:
    zero-based sequence, LF framing, every byte envelope, every artifact group,
    record counts, diagnostics, successful footer, and exact stream SHA-256.
 7. Python derives the static API from only validated contracts.
-8. The existing hashing and publication stages run unchanged.
+8. Builder writes a deterministic contract archive manifest authenticating the
+   complete NDJSON files, including their footers.
+9. The existing hashing and publication stages run unchanged.
 
 The build fails closed. It does not publish a partial catalog when a module is
 missing, extraction fails, an error diagnostic is present, or validation fails.
@@ -45,9 +48,8 @@ The extension is documented as JSON Schema in `schema/v3/source.schema.json`.
 
 ## Version and production gate
 
-The branch pins getBibleSWORD `0.1.0`, whose own documentation calls it an
-engineering preview. The Builder integration therefore remains a review branch
-until both projects' production gates are met:
+Builder follows the latest stable GetBibleSWORD release. The Builder integration
+remains under production-gate review until both projects' gates are met:
 
 - a redistributable driver-spanning conformance corpus;
 - this independent validator/reassembler passing that corpus;
@@ -60,9 +62,16 @@ contract major version is rejected.
 
 ## Release installation
 
-`scripts/install_getbiblesword.py` downloads the exact architecture asset and its
-`.sha256` companion from release `v0.1.0`, verifies the checksum, rejects unsafe tar
-members, and installs only `usr/bin/getbiblesword`.
+`scripts/install_getbiblesword.py` resolves GitHub's latest stable release,
+downloads the exact architecture asset and its `.sha256` companion, verifies the
+checksum and GitHub asset digest, rejects unsafe tar members, and installs only
+`usr/bin/getbiblesword`. It writes exact release provenance to
+`.tools/getbiblesword-release.json`.
+
+`--version X.Y.Z` remains available for deterministic reproduction or incident
+investigation. Production and scheduled conformance workflows intentionally use
+the default `latest` policy so that a newly published extractor release is tested
+without waiting for a Builder commit.
 
 The GetBibleSWORD repository and its release assets are public, so neither local
 builds nor GitHub Actions need an access token. Local builds may use the verified
@@ -72,8 +81,15 @@ installer or pass `--getbiblesword=/absolute/path`.
 
 - `sword_zip/`: downloaded module archives;
 - `sword_root/`: fresh explicit SWORD installation;
-- `sword_contracts/`: validated NDJSON contracts;
+- `sword_contracts/`: validated NDJSON contracts and their `manifest.json`;
 - `v3_scripture/`: private generated Scripture JSON;
 - `v3/`: public hash/index repository.
 
 The first three are reproducible working data and are gitignored.
+
+## Inspectable preview
+
+`.github/workflows/preview-build.yml` builds the six-module test catalog with the
+latest stable binary. It uploads generated API files and the lossless contracts as
+separate 30-day GitHub Actions artifacts. This preview never pushes to the public
+API repositories and is therefore safe for evaluating a proposed Builder change.

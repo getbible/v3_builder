@@ -3,7 +3,7 @@ name: "Native GetBibleSWORD Smoke Test"
 on:
   push:
     branches:
-      - getbiblesword
+      - master
     paths:
       - ".github/workflows/native-smoke.yml"
       - "scripts/install_getbiblesword.py"
@@ -11,6 +11,8 @@ on:
       - "tests_integration/**"
       - "conf/CrosswireModulesMapTest.json"
       - "requirements*.txt"
+  schedule:
+    - cron: "37 3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -44,6 +46,7 @@ jobs:
           python scripts/install_getbiblesword.py
           .tools/getbiblesword version
           .tools/getbiblesword contract
+          python -m json.tool .tools/getbiblesword-release.json
 
       - name: Build and validate real modules
         env:
