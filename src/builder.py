@@ -17,6 +17,7 @@ if _src_dir not in sys.path:
     sys.path.insert(0, _src_dir)
 
 from converter import ConversionConfig
+from contract_archive import write_contract_manifest
 from download import download_modules
 from file_ops import clean_empty_files, move_public_hash_files
 from getbiblesword_converter import GetBibleSwordConverter
@@ -145,6 +146,7 @@ class BuildPipeline:
 
         reader = GetBibleSwordReader(self._config.getbiblesword)
         contracts = []
+        summaries = []
         for index, module_name in enumerate(module_names, 1):
             output = os.path.join(self._config.contracts_dir, f"{module_name}.ndjson")
             log.info("[%d/%d] Extracting %s", index, len(module_names), module_name)
@@ -157,6 +159,9 @@ class BuildPipeline:
                 summary.stream_sha256,
             )
             contracts.append((module_name, output))
+            summaries.append(summary)
+        manifest = write_contract_manifest(self._config.contracts_dir, summaries)
+        log.info("Wrote validated contract archive manifest: %s", manifest)
         return contracts
 
     def _convert_contracts(self, contracts):

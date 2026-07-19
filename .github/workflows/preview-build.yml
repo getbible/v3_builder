@@ -1,0 +1,74 @@
+name: "Build inspectable GetBible v3 preview"
+
+on:
+  push:
+    branches:
+      - "agent/**"
+    paths:
+      - ".github/workflows/preview-build.yml"
+      - "scripts/install_getbiblesword.py"
+      - "src/**"
+      - "schema/**"
+      - "conf/CrosswireModulesMapTest.json"
+      - "conf/PublicationPolicy.json"
+      - "requirements*.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: getbible-v3-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: "Latest binary + six real modules"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install latest stable GetBibleSWORD release
+        run: |
+          python scripts/install_getbiblesword.py
+          .tools/getbiblesword version
+          .tools/getbiblesword contract
+          python -m json.tool .tools/getbiblesword-release.json
+
+      - name: Build six-module preview
+        env:
+          GETBIBLESWORD_BIN: ${{ github.workspace }}/.tools/getbiblesword
+        run: python src/builder.py --test --verbose
+
+      - name: Upload generated API preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: getbible-v3-preview-${{ github.run_id }}
+          path: |
+            v3t_scripture/
+            v3t/
+            .tools/getbiblesword-release.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload lossless NDJSON contracts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: getbiblesword-contracts-${{ github.run_id }}
+          path: sword_contractst/
+          if-no-files-found: warn
+          retention-days: 30

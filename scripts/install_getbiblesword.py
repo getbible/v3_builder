@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Install a pinned, checksum-verified getBibleSWORD GitHub release asset."""
+"""Install a checksum-verified getBibleSWORD GitHub release asset.
+
+The default follows GitHub's latest stable release.  Operators can still pass an
+exact version when reproducing or investigating an older build.
+"""
 
 from __future__ import annotations
 
@@ -17,15 +21,33 @@ import tarfile
 import tempfile
 import urllib.error
 import urllib.request
+from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
 
 DEFAULT_REPOSITORY = "getbible/getbiblesword"
-DEFAULT_VERSION = "0.1.0"
+DEFAULT_VERSION = "latest"
+_VERSION_PATTERN = re.compile(
+    r"^v?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)$"
+)
 
 
 class InstallError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class InstalledRelease:
+    """Auditable facts about the exact release installed for this build."""
+
+    repository: str
+    release_id: int
+    release_url: str
+    tag: str
+    version: str
+    asset: str
+    sha256: str
+    executable: str
 
 
 def _request(url: str, *, accept: str) -> bytes:
@@ -41,18 +63,44 @@ def _request(url: str, *, accept: str) -> bytes:
         raise InstallError(f"GitHub returned HTTP {exc.code} for {url}") from exc
 
 
-def _release(repository: str, version: str) -> dict:
+def _requested_version(version: str) -> str:
+    if version == "latest":
+        return version
+    match = _VERSION_PATTERN.fullmatch(version)
+    if not match:
+        raise InstallError("version must be 'latest' or a semantic release version")
+    return match.group(1)
+
+
+def _release(repository: str, version: str) -> tuple[dict, str]:
+    requested = _requested_version(version)
+    endpoint = (
+        f"https://api.github.com/repos/{repository}/releases/latest"
+        if requested == "latest"
+        else f"https://api.github.com/repos/{repository}/releases/tags/v{requested}"
+    )
     payload = _request(
-        f"https://api.github.com/repos/{repository}/releases/tags/v{version}",
+        endpoint,
         accept="application/vnd.github+json",
     )
     try:
         release = json.loads(payload)
     except json.JSONDecodeError as exc:
         raise InstallError("GitHub returned invalid release metadata") from exc
-    if release.get("tag_name") != f"v{version}":
-        raise InstallError("release tag does not match the pinned version")
-    return release
+    tag = release.get("tag_name")
+    if not isinstance(tag, str):
+        raise InstallError("release metadata has no tag")
+    match = _VERSION_PATTERN.fullmatch(tag)
+    if not match:
+        raise InstallError("release tag is not a supported semantic version")
+    resolved = match.group(1)
+    if requested != "latest" and resolved != requested:
+        raise InstallError("release tag does not match the requested version")
+    if release.get("draft") is True or release.get("prerelease") is True:
+        raise InstallError("draft and prerelease builds are not installable")
+    if not isinstance(release.get("id"), int):
+        raise InstallError("release metadata has no numeric id")
+    return release, resolved
 
 
 def _architecture() -> str:
@@ -121,33 +169,82 @@ def _extract_executable(archive_bytes: bytes, destination: Path) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def install(repository: str, version: str, destination: str) -> Path:
+def install_release(repository: str, version: str, destination: str) -> InstalledRelease:
     architecture = _architecture()
-    archive_name = f"getbiblesword-{version}-linux-{architecture}.tar.gz"
-    release = _release(repository, version)
-    archive = _download_asset(_asset(release, archive_name))
+    release, resolved_version = _release(repository, version)
+    archive_name = (
+        f"getbiblesword-{resolved_version}-linux-{architecture}.tar.gz"
+    )
+    archive_asset = _asset(release, archive_name)
+    archive = _download_asset(archive_asset)
     checksum = _download_asset(_asset(release, archive_name + ".sha256"))
     expected = _expected_digest(checksum, archive_name)
     actual = hashlib.sha256(archive).hexdigest()
     if actual != expected:
         raise InstallError("getBibleSWORD release checksum verification failed")
+    api_digest = archive_asset.get("digest")
+    if api_digest is not None and api_digest != f"sha256:{actual}":
+        raise InstallError("GitHub release asset digest does not match its bytes")
     target = Path(destination).resolve()
     _extract_executable(archive, target)
+    return InstalledRelease(
+        repository=repository,
+        release_id=release["id"],
+        release_url=str(release.get("html_url", "")),
+        tag=f"v{resolved_version}",
+        version=resolved_version,
+        asset=archive_name,
+        sha256=actual,
+        executable=str(target),
+    )
+
+
+def _write_metadata(installed: InstalledRelease, destination: str) -> Path:
+    target = Path(destination).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.", dir=target.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(asdict(installed), output, sort_keys=True, separators=(",", ":"))
+            output.write("\n")
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
     return target
+
+
+def install(repository: str, version: str, destination: str) -> Path:
+    """Compatibility wrapper returning only the installed executable path."""
+
+    return Path(install_release(repository, version, destination).executable)
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", default=DEFAULT_REPOSITORY)
-    parser.add_argument("--version", default=DEFAULT_VERSION)
+    parser.add_argument(
+        "--version",
+        default=os.environ.get("GETBIBLESWORD_VERSION", DEFAULT_VERSION),
+        help="semantic release version or 'latest' (default)",
+    )
     parser.add_argument("--destination", default=".tools/getbiblesword")
+    parser.add_argument(
+        "--metadata",
+        default=".tools/getbiblesword-release.json",
+        help="write exact resolved release provenance to this JSON file",
+    )
     args = parser.parse_args(argv)
     try:
-        path = install(args.repository, args.version, args.destination)
+        installed = install_release(args.repository, args.version, args.destination)
+        metadata = _write_metadata(installed, args.metadata)
     except InstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(path)
+    print(f"installed getBibleSWORD {installed.tag} at {installed.executable}")
+    print(f"release metadata: {metadata}")
     return 0
 
 

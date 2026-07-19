@@ -15,6 +15,6 @@ Non-negotiable invariants:
 - Keep builds deterministic and offline after module/release downloads.
 
 Run `python -m pytest tests/ -v` for unit changes. Native integration changes also
-require the manual integration workflow with the pinned release and real test
-modules. GetBibleSWORD `0.1.x` is an engineering preview; do not promote this branch
-to production without satisfying the gates in the pipeline document.
+require the integration workflow with the latest stable release and real test
+modules. Record the exact resolved release for every build. Do not promote the
+pipeline to production without satisfying the gates in the pipeline document.
