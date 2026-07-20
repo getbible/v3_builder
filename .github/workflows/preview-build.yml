@@ -64,11 +64,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload lossless NDJSON contracts
+      - name: Discard transient module and extraction data
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: getbiblesword-contracts-${{ github.run_id }}
-          path: sword_contractst/
-          if-no-files-found: warn
-          retention-days: 30
+        run: rm -rf -- sword_contractst sword_roott sword_zipt

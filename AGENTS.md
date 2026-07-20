@@ -7,11 +7,13 @@ Non-negotiable invariants:
 
 - Treat `getbiblesword` as a subprocess and the NDJSON file as an untrusted input.
 - Validate a complete successful footer and exact stream hash before conversion.
-- Decode base64 as authoritative and retain unknown v1 data.
+- Decode base64 as authoritative and never silently drop unknown v1 data; fail
+  conversion until an explicit semantic mapping exists.
 - Never replace raw entry bytes with rendered or stripped projections.
 - Keep publication default-deny; a module map edit is not publication approval.
 - Do not create symlinks while installing ZIPs or reassembling artifacts.
-- Preserve existing API fields unless a separately reviewed API version changes.
+- Preserve existing API fields unless a separately reviewed API version changes;
+  never publish lossless byte envelopes in the static API.
 - Keep builds deterministic and offline after module/release downloads.
 
 Run `python -m pytest tests/ -v` for unit changes. Native integration changes also

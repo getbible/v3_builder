@@ -1,95 +1,101 @@
 # GetBibleSWORD pipeline
 
-Builder v3 uses the official CrossWire SWORD engine through the separately released
-`getbiblesword` executable. The executable is a subprocess dependency, not an
-in-process Python extension. This keeps the C++/GPL boundary explicit and lets both
-projects release, test, and evolve independently.
+Builder v3 uses the official CrossWire SWORD engine through the separately
+released `getbiblesword` executable. The executable is a subprocess dependency,
+not an in-process Python extension, so the C++/GPL extraction boundary remains
+explicit and both projects can release and test independently.
 
-## Trust flow
+## Trust and publication flow
 
-1. Builder loads `conf/CrosswireModulesMap.json`.
-2. `conf/PublicationPolicy.json` must explicitly approve every requested module.
-3. Builder downloads the approved CrossWire ZIP files.
+1. Builder loads the requested module map.
+2. `conf/PublicationPolicy.json` must explicitly approve every module.
+3. Builder freshly downloads the approved CrossWire ZIP files; no prior module or
+   extraction cache is used.
 4. ZIPs are installed into a fresh explicit SWORD root. Absolute paths, traversal,
    links, oversized archives, and conflicting files are rejected.
-5. The latest stable `getbiblesword` release extracts each module into one NDJSON
-   file. Its exact resolved release and checksum are recorded for reproducibility.
-6. Builder independently verifies the v1 contract before conversion:
-   zero-based sequence, LF framing, every byte envelope, every artifact group,
-   record counts, diagnostics, successful footer, and exact stream SHA-256.
-7. Python derives the static API from only validated contracts.
-8. Builder writes a deterministic contract archive manifest authenticating the
-   complete NDJSON files, including their footers.
-9. The existing hashing and publication stages run unchanged.
+5. The latest stable GetBibleSWORD release extracts each module to a transient
+   NDJSON contract.
+6. Builder independently validates the complete v1 stream: zero-based sequence,
+   LF framing, byte envelopes, artifact groups, counts, diagnostics, successful
+   footer, and exact stream SHA-256.
+7. Python streams the validated entries into compact translation, book, chapter,
+   and verse JSON. It retains text, complete token/span data, paragraph markers,
+   headings, and introduction semantics—not extraction envelopes.
+8. The module ZIPs, SWORD root, and contracts are discarded after the build
+   attempt, including a failed conversion.
+9. Generated Scripture files pass hard-size, historical-growth, and filesystem
+   safety gates before hashing.
+10. Scripture publication completes before the derived hash repository is
+    attempted. Any Git error fails the workflow; permanent remote rejections are
+    not retried.
 
-The build fails closed. It does not publish a partial catalog when a module is
-missing, extraction fails, an error diagnostic is present, or validation fails.
+The build therefore fails closed. It does not publish a partial catalog when a
+module is missing, extraction or validation fails, an unmapped record appears, a
+generated file is unsafe or too large, or publication fails.
 
-## Lossless and derived representations
+## Lossless input, lean output
 
-The NDJSON contract is the source of truth. Its base64 values are authoritative;
-the optional UTF-8 member is only a convenience projection. Builder never replaces
-raw bytes with SWORD's rendered or stripped views.
+The NDJSON contract is authoritative only while a build is running. Its base64
+values preserve exact bytes for validation and semantic derivation; optional UTF-8
+members are convenience projections. The contract is not an archive and never
+becomes a public endpoint.
 
-The API retains its existing translation/book/chapter/verse fields and token/span
-model. It adds:
+The static API keeps its established translation/book/chapter/verse fields and
+complete token/span model. It additionally projects supported OSIS structure:
 
-- `source_contract` on translation, book, and chapter documents;
-- `source` on every verse, containing raw bytes, rendered and stripped projections,
-  official entry attributes, annotation segments, key, and canonical scope;
-- `source` on the translation document for exact module/configuration metadata;
-- `introductions` or `introduction` at translation, book, and chapter scope.
+- `paragraph: true` on a verse that begins a paragraph;
+- ordered `titles` for chapter headings, section headings, Psalm superscriptions,
+  and other typed titles supplied by the module;
+- normalized `introduction` prose at its natural structural level.
 
-This is intentionally additive. Existing API clients do not need to understand the
-new fields. New consumers can recover titles, paragraph milestones, notes,
-cross-references, poetry, variants, figures, references, words, and unknown markup
-from the exact entry envelope even before a higher-level semantic projection exists.
-The extension is documented as JSON Schema in `schema/v3/source.schema.json`.
-
-## Version and production gate
-
-Builder follows the latest stable GetBibleSWORD release. The Builder integration
-remains under production-gate review until both projects' gates are met:
-
-- a redistributable driver-spanning conformance corpus;
-- this independent validator/reassembler passing that corpus;
-- deterministic repeated extraction on supported architectures;
-- maintainer review of the classification and public API projection;
-- successful comparison against the current published API for all approved Bibles.
-
-Unknown v1 record types are retained in translation source metadata. An unknown
-contract major version is rejected.
+Raw bytes, rendered/stripped projections, base64 values, annotation segments,
+module files, exact configuration-source records, `source`, and `source_contract`
+are never copied into the API. Unknown v1 record types fail until an explicit,
+reviewed semantic mapping exists; unknown contract major versions are rejected.
 
 ## Release installation
 
 `scripts/install_getbiblesword.py` resolves GitHub's latest stable release,
-downloads the exact architecture asset and its `.sha256` companion, verifies the
+downloads the matching architecture asset and `.sha256` companion, verifies the
 checksum and GitHub asset digest, rejects unsafe tar members, and installs only
 `usr/bin/getbiblesword`. It writes exact release provenance to
 `.tools/getbiblesword-release.json`.
 
 `--version X.Y.Z` remains available for deterministic reproduction or incident
-investigation. Production and scheduled conformance workflows intentionally use
-the default `latest` policy so that a newly published extractor release is tested
-without waiting for a Builder commit.
-
-The GetBibleSWORD repository and its release assets are public, so neither local
-builds nor GitHub Actions need an access token. Local builds may use the verified
-installer or pass `--getbiblesword=/absolute/path`.
+investigation. Production and scheduled conformance workflows use the default
+latest-stable policy so a newly published extractor release is tested without
+waiting for a Builder commit.
 
 ## Working directories
 
-- `sword_zip/`: downloaded module archives;
+- `sword_zip/`: freshly downloaded module archives;
 - `sword_root/`: fresh explicit SWORD installation;
-- `sword_contracts/`: validated NDJSON contracts and their `manifest.json`;
-- `v3_scripture/`: private generated Scripture JSON;
-- `v3/`: public hash/index repository.
+- `sword_contracts/`: validated NDJSON working files;
+- `v3_scripture/`: generated Scripture JSON repository;
+- `v3/`: generated public hash/index repository.
 
-The first three are reproducible working data and are gitignored.
+The first three are reproducible transient inputs. Builder removes them after
+each build attempt and workflows neither cache nor upload them.
 
-## Inspectable preview
+## Inspectable workflows
 
 `.github/workflows/preview-build.yml` builds the six-module test catalog with the
-latest stable binary. It uploads generated API files and the lossless contracts as
-separate 30-day GitHub Actions artifacts. This preview never pushes to the public
-API repositories and is therefore safe for evaluating a proposed Builder change.
+latest stable binary and uploads only the generated API preview. It never pushes
+to public repositories.
+
+`.github/workflows/inspect-kjv-api.yml` is a manual, KJV-only diagnostic build. It
+starts from a fresh module download and prints size reports, structural summaries,
+and representative full verse records for Psalms, John, and Revelation chapters
+1–5. It rejects missing data, malformed token/span ranges, source-envelope leaks,
+symlinks, and files at or above 95 MiB. It does not cache, upload, or publish the
+result.
+
+## Production gate
+
+The Builder integration remains under review until these gates are met:
+
+- a redistributable driver-spanning conformance corpus;
+- this independent validator/reassembler passing that corpus;
+- deterministic repeated extraction on supported architectures;
+- maintainer review of classification and public API projection;
+- successful comparison against the current published API for all approved Bibles.

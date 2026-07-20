@@ -1,41 +1,13 @@
 # GetBible API v3 output contract
 
-Builder produces three distinct layers. They must not be confused because they
-serve different trust and compatibility purposes.
+Builder produces a compact static Scripture API from a validated, transient
+GetBibleSWORD extraction stream. The extraction stream is a build boundary, not
+an API layer or an archive: it is freshly generated for every build and discarded
+after conversion.
 
-## 1. Lossless extraction contract
+## Static file layout
 
-For every SWORD module, GetBibleSWORD emits:
-
-```text
-sword_contracts/<SWORD-module-name>.ndjson
-sword_contracts/manifest.json
-```
-
-The NDJSON file is the authoritative extraction record. It retains exact byte
-envelopes for module configuration, entries, SWORD projections, attributes,
-annotations, and module filesystem artifacts. The complete stream is validated
-before conversion.
-
-`manifest.json` uses
-`getbible.contract-archive-manifest/v1`. For every module it records:
-
-- the NDJSON filename, complete-file size and SHA-256;
-- the contract stream SHA-256 declared by GetBibleSWORD;
-- producer and SWORD engine versions;
-- classification, entry count, artifact count and artifact bytes;
-- diagnostic severity counts and unknown record types.
-
-The complete-file hash includes the footer. The stream hash authenticates all
-records preceding the footer. This deliberately gives archive tooling both views.
-
-Contracts are build/archive artifacts, not automatically public endpoints. Their
-publication must be authorized independently because they can contain original
-module files and licensed media.
-
-## 2. Backward-compatible static API
-
-The current public file layout remains:
+The public layout remains compatible with existing clients:
 
 ```text
 <abbreviation>.json
@@ -47,81 +19,73 @@ translations.json
 checksum.json and matching .sha/checksum files
 ```
 
-### Translation document
+The translation document contains the language, direction, encoding,
+distribution metadata, and its complete book/chapter/verse hierarchy. Book and
+chapter documents repeat the stable translation metadata needed when those files
+are requested directly.
 
-`<abbreviation>.json` contains translation, language, direction, encoding,
-distribution metadata, every included book/chapter/verse, `source_contract`, and
-translation-level `source` metadata. `source` retains the exact module record,
-configuration sources, ordered configuration entries, diagnostics, and unknown
-contract records.
+## Verse and structural semantics
 
-### Book and chapter documents
-
-Book and chapter files repeat the stable translation metadata required by existing
-clients. They also carry `source_contract`, allowing any response to be tied back
-to its validated extraction stream.
-
-### Verse document
-
-Every emitted verse keeps the existing fields:
+Every emitted verse keeps the established fields:
 
 ```json
 {"chapter":1,"verse":1,"name":"Genesis 1:1","text":"In the beginning..."}
 ```
 
-It may add normalized `tokens` and `spans` when the source contains supported OSIS
-word markup. It always adds `source`, containing:
+Supported OSIS structure is projected into compact, optional fields:
 
-- contract id, entry ordinal, exact key and canonical scope;
-- authoritative raw bytes;
-- SWORD's rendered-default and stripped projections;
-- all official SWORD attributes;
-- every lossless annotation segment.
+- `paragraph: true` means the verse begins a paragraph;
+- `titles` is an ordered list of visible headings, including chapter titles,
+  section headings, and Psalm superscriptions where the module provides them;
+- `tokens` retains word-level lexical attributes and visible word positions;
+- `spans` retains supported annotations over token and visible-word ranges.
 
-All byte values are objects containing base64, SHA-256, size, encoding and optional
-verified UTF-8. Base64 is authoritative.
+A title contains `text`, its OSIS `type` when supplied, optional `canonical` and
+`subtype` values, and title-local `tokens`/`spans` when word markup is available.
+Chapter and book titles are attached at their natural structural level. A title
+inside a verse is attached to that verse, which lets clients locate the heading
+without reconstructing raw OSIS.
 
-Introduction entries are attached at translation, book, or chapter level. Entries
-that cannot safely map to a normal Bible scope are retained as `unscoped_entries`
-instead of being discarded.
+Module, testament, book, and chapter introduction prose is normalized into an
+`introduction` list at the appropriate level. Structural title-only entries are
+promoted to `titles` without duplicating the same string as introduction prose.
 
-## 3. Planned semantic and interchange projections
+## Transient extraction boundary
 
-The lossless contract is sufficient to derive richer APIs without re-downloading
-or guessing at source data. The next additive projections are:
+For each requested module, GetBibleSWORD creates one NDJSON contract in the
+working directory. Builder validates the complete successful footer, stream
+hash, sequence, every byte envelope, artifact group, count, and diagnostic before
+conversion. Conversion then streams entries from that validated file so a large
+contract is not retained as a second in-memory copy.
 
-```text
-<abbreviation>/manifest.json
-<abbreviation>/rich/<book-number>/<chapter-number>.json
-<abbreviation>/usj/<book-number>.json
-<abbreviation>/scripture-burrito/metadata.json
-```
+The module ZIP, materialized SWORD installation, and validated NDJSON are deleted
+after the build attempt, including failed conversions. They are not cached,
+uploaded, committed, or retained as build artifacts.
 
-- `manifest.json` will advertise capabilities, canon, contract digests, file
-  locations, and publication permissions.
-- `rich` will normalize titles, paragraphs, poetry, notes, cross-references,
-  variants, figures, milestones, references, words, lemmas and morphology while
-  retaining source provenance.
-- `usj` will be an industry interchange projection for Scripture text, not the
-  authoritative GetBible storage format.
-- Scripture Burrito metadata will package identification, language, licensing and
-  interchange information.
+The following extraction-only data is deliberately absent from every public API
+document:
 
-Commentaries, dictionaries and general books will use their own normalized domain
-schemas. They remain representable in the common lossless NDJSON layer.
+- `source` and `source_contract` envelopes;
+- raw/rendered/stripped byte projections;
+- base64 payloads and annotation-segment envelopes;
+- module filesystem artifacts and exact configuration-source records.
 
-## Compatibility rules
+An unknown contract major version or unmapped v1 record type fails conversion.
+This prevents silent semantic loss while keeping the public API small.
 
-- Existing v3 fields are not removed or retyped.
-- New v3 information is additive.
-- Raw byte envelopes are never replaced by a derived text projection.
-- Unknown v1 contract records are retained.
-- Unsupported contract major versions fail closed.
-- A semantic projection never becomes more authoritative than its source contract.
-- Publication authorization is evaluated separately for text, annotations,
-  contracts and binary artifacts.
+## Publication rules
 
-Schemas currently available:
+- Existing stable API fields are not removed or retyped.
+- Semantic fields are additive and deterministic.
+- Files at or above 95 MiB fail before hashing or publication.
+- Tracked JSON growth above 25% fails unless a maintainer supplies the explicit
+  reviewed-growth override; the 95 MiB ceiling cannot be overridden.
+- Symlinks and special files in generated output fail validation.
+- Scripture output is validated and published before its derived hash repository.
+- A Git failure exits the workflow nonzero. Permanent remote rejections such as
+  GitHub `GH001` are not retried.
 
-- `schema/v3/source.schema.json` — native source extension;
-- `schema/archive/contract-manifest.schema.json` — lossless archive inventory.
+The manual `Inspect fresh KJV API output` workflow builds KJV from a fresh module
+download, prints bounded structural summaries and representative records for
+Psalms, John, and Revelation chapters 1–5, and applies the same envelope and size
+checks without publishing anything.

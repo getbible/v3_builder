@@ -17,7 +17,6 @@ if _src_dir not in sys.path:
     sys.path.insert(0, _src_dir)
 
 from converter import ConversionConfig
-from contract_archive import write_contract_manifest
 from download import download_modules
 from file_ops import clean_empty_files, move_public_hash_files
 from getbiblesword_converter import GetBibleSwordConverter
@@ -53,6 +52,7 @@ class BuildConfig:
     sword_root: str = ""
     getbiblesword: str = "getbiblesword"
     publication_policy: str = ""
+    allow_output_growth: bool = False
 
     @classmethod
     def from_args(cls, argv=None):
@@ -79,6 +79,7 @@ class BuildConfig:
             sword_root=args.sword_root,
             getbiblesword=args.getbiblesword,
             publication_policy=args.publication_policy,
+            allow_output_growth=args.allow_output_growth,
         )
 
 
@@ -89,18 +90,30 @@ class BuildPipeline:
         self._config = config
         self._scripture_path = config.api_path + "_scripture"
         self._hash_path = config.api_path
-        self._scripture_repo = GitRepository(self._scripture_path, config.repo_scripture)
-        self._hash_repo = GitRepository(self._hash_path, config.repo_hash)
+        self._scripture_repo = GitRepository(
+            self._scripture_path,
+            config.repo_scripture,
+            allow_output_growth=config.allow_output_growth,
+        )
+        self._hash_repo = GitRepository(
+            self._hash_path,
+            config.repo_hash,
+            allow_output_growth=config.allow_output_growth,
+        )
 
     def run(self):
         start_time = time.time()
         if not self._config.hash_only:
-            module_names = self._authorized_modules()
-            self._download(module_names)
-            self._prepare_scripture_repo()
-            contracts = self._extract_contracts(module_names)
-            self._convert_contracts(contracts)
-            self._clean()
+            try:
+                module_names = self._authorized_modules()
+                self._download(module_names)
+                self._prepare_scripture_repo()
+                contracts = self._extract_contracts(module_names)
+                self._convert_contracts(contracts)
+                self._clean()
+            finally:
+                self._cleanup_transient_inputs()
+        self._scripture_repo.validate_output()
         self._hash()
         self._prepare_hash_repo()
         self._copy_public_files()
@@ -146,7 +159,6 @@ class BuildPipeline:
 
         reader = GetBibleSwordReader(self._config.getbiblesword)
         contracts = []
-        summaries = []
         for index, module_name in enumerate(module_names, 1):
             output = os.path.join(self._config.contracts_dir, f"{module_name}.ndjson")
             log.info("[%d/%d] Extracting %s", index, len(module_names), module_name)
@@ -159,9 +171,6 @@ class BuildPipeline:
                 summary.stream_sha256,
             )
             contracts.append((module_name, output))
-            summaries.append(summary)
-        manifest = write_contract_manifest(self._config.contracts_dir, summaries)
-        log.info("Wrote validated contract archive manifest: %s", manifest)
         return contracts
 
     def _convert_contracts(self, contracts):
@@ -180,6 +189,44 @@ class BuildPipeline:
         files_removed, directories_removed = clean_empty_files(self._scripture_path)
         log.info("Cleaned %d files, %d dirs", files_removed, directories_removed)
 
+    def _cleanup_transient_inputs(self):
+        """Discard reproducible module, SWORD-root, and contract working data."""
+        repository_root = os.path.realpath(os.path.abspath(self._config.base_dir))
+        publication_roots = (
+            os.path.realpath(os.path.abspath(self._scripture_path)),
+            os.path.realpath(os.path.abspath(self._hash_path)),
+        )
+        for label, path in (
+            ("downloaded module ZIPs", self._config.zip_dir),
+            ("materialized SWORD root", self._config.sword_root),
+            ("validated NDJSON contracts", self._config.contracts_dir),
+        ):
+            if not path:
+                continue
+            requested = os.path.abspath(path)
+            absolute = os.path.realpath(requested)
+            if requested != absolute:
+                raise RuntimeError(
+                    f"refusing to clean symlinked transient {label} path: {requested}"
+                )
+            encompasses_repository = _contains_path(absolute, repository_root)
+            overlaps_publication = any(
+                _contains_path(absolute, publication_root)
+                or _contains_path(publication_root, absolute)
+                for publication_root in publication_roots
+            )
+            if absolute == os.path.abspath(os.sep) or encompasses_repository or overlaps_publication:
+                raise RuntimeError(
+                    f"refusing to clean unsafe transient {label} path: {absolute}"
+                )
+            if os.path.isdir(absolute):
+                shutil.rmtree(absolute)
+                log.info("Discarded transient %s: %s", label, absolute)
+            elif os.path.lexists(absolute):
+                raise RuntimeError(
+                    f"refusing to clean non-directory transient {label} path: {absolute}"
+                )
+
     def _hash(self):
         ContentHasher(self._scripture_path).hash_all()
 
@@ -192,6 +239,14 @@ class BuildPipeline:
 
     def _push(self):
         push_all_repos(self._scripture_repo, self._hash_repo)
+
+
+def _contains_path(container, candidate):
+    """Return whether ``container`` is ``candidate`` or one of its ancestors."""
+    try:
+        return os.path.commonpath((container, candidate)) == container
+    except ValueError:
+        return False
 
 
 def _parse_raw_args(argv=None):
@@ -225,6 +280,14 @@ def _parse_raw_args(argv=None):
         "--publication-policy",
         default=os.path.join(default_conf, "PublicationPolicy.json"),
         help="default-deny module publication approval manifest",
+    )
+    parser.add_argument(
+        "--allow-output-growth",
+        action="store_true",
+        help=(
+            "explicitly allow tracked JSON to grow by more than 25%% for a reviewed "
+            "schema change; the 95 MiB hard ceiling remains enforced"
+        ),
     )
     parser.add_argument("--pull", action="store_true")
     parser.add_argument("--push", action="store_true")
@@ -278,6 +341,7 @@ def _apply_config_file(args):
         "getbible.pull": "pull",
         "getbible.push": "push",
         "getbible.hashonly": "hash_only",
+        "getbible.allow-output-growth": "allow_output_growth",
     }.items():
         if config_key in config:
             setattr(args, attribute, config[config_key] == "1")
@@ -301,6 +365,7 @@ def run_build(args):
         "download", "pull", "push", "hash_only", "test", "dry", "set_active",
         "github", "verbose", "contracts_dir", "sword_root", "getbiblesword",
         "publication_policy",
+        "allow_output_growth",
     ):
         if hasattr(args, name):
             setattr(config, name, getattr(args, name))
@@ -318,7 +383,7 @@ def main(argv=None):
         for name in (
             "api", "zip_dir", "bible_conf", "contracts_dir", "sword_root",
             "getbiblesword", "publication_policy", "download", "hash_only", "pull",
-            "push", "test", "repo_hash", "repo_scripture",
+            "push", "test", "repo_hash", "repo_scripture", "allow_output_growth",
         ):
             print(f"{name}: {getattr(args, name)}")
         return 0

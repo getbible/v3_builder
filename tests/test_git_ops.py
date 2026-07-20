@@ -4,7 +4,16 @@ import os
 import subprocess
 import pytest
 
-from git_ops import prep_git_repo, push_to_github, push_all
+from git_ops import (
+    GitOperationError,
+    GitPushError,
+    GitRepository,
+    prep_git_repo,
+    push_all,
+    push_all_repos,
+    push_to_github,
+)
+from publication_safety import PublicationSafetyError
 
 
 def _git(args, cwd=None):
@@ -89,8 +98,9 @@ class TestPrepGitRepo:
 
 
 class TestPushToGithub:
-    def test_no_git_dir_returns_false(self, tmp_path):
-        assert push_to_github(str(tmp_path)) is False
+    def test_no_git_dir_is_a_required_repository_failure(self, tmp_path):
+        with pytest.raises(GitOperationError, match='missing .git directory'):
+            push_to_github(str(tmp_path))
 
     def test_no_changes_returns_false(self, tmp_path):
         repo = tmp_path / 'repo'
@@ -125,11 +135,218 @@ class TestPushToGithub:
 
 
 class TestPushAll:
-    def test_pushes_both_repos(self, tmp_path):
+    def test_missing_required_repositories_fail(self, tmp_path):
+        with pytest.raises(PublicationSafetyError, match='root does not exist'):
+            push_all(str(tmp_path / 'v3'))
+
+    def test_existing_plain_directory_is_not_treated_as_no_changes(self, tmp_path):
         api = tmp_path / 'v3'
         scripture = tmp_path / 'v3_scripture'
-        # Both are plain dirs (no .git), should return False gracefully
         api.mkdir()
         scripture.mkdir()
-        result = push_all(str(api))
-        assert result is False
+
+        with pytest.raises(GitOperationError, match='missing .git directory'):
+            push_all(str(api))
+
+
+class TestPublicationSafety:
+    def test_growth_baseline_survives_output_cleanup(self, tmp_path):
+        repo_path = tmp_path / 'repo'
+        _init_repo(repo_path)
+        generated = repo_path / 'kjv.json'
+        generated.write_bytes(b'x' * 100)
+        _git(['add', '.'], cwd=str(repo_path))
+        _git(['commit', '-m', 'baseline'], cwd=str(repo_path))
+
+        repo = GitRepository(str(repo_path), max_file_bytes=10_000)
+        repo.prepare()
+        assert not generated.exists()
+
+        generated.write_bytes(b'x' * 126)
+        with pytest.raises(PublicationSafetyError) as exc_info:
+            repo.validate_output()
+
+        message = str(exc_info.value)
+        assert str(generated) in message
+        assert 'previously 100 bytes' in message
+
+    def test_explicit_growth_override_is_scoped_to_growth(self, tmp_path):
+        repo_path = tmp_path / 'repo'
+        _init_repo(repo_path)
+        generated = repo_path / 'kjv.json'
+        generated.write_bytes(b'x' * 10)
+        _git(['add', '.'], cwd=str(repo_path))
+        _git(['commit', '-m', 'baseline'], cwd=str(repo_path))
+
+        repo = GitRepository(
+            str(repo_path), allow_output_growth=True, max_file_bytes=100,
+        )
+        repo.prepare()
+        generated.write_bytes(b'x' * 99)
+        repo.validate_output()
+
+        generated.write_bytes(b'x' * 100)
+        with pytest.raises(PublicationSafetyError, match='hard ceiling'):
+            repo.validate_output()
+
+
+class TestPushFailures:
+    def test_gh001_is_permanent_and_not_retried(self, tmp_path, monkeypatch):
+        repo = GitRepository(str(tmp_path))
+        calls = []
+
+        def failed_push(args, cwd=None, timeout=None):
+            calls.append(args)
+            return (
+                1,
+                '',
+                'remote: error: File kjv.json is 556 MB; this exceeds GitHub\'s '
+                'file size limit of 100 MB\nremote: error: GH001: Large files detected.',
+            )
+
+        monkeypatch.setattr(repo, '_run', failed_push)
+        monkeypatch.setattr('git_ops.time.sleep', lambda _: pytest.fail('must not retry'))
+
+        with pytest.raises(GitPushError) as exc_info:
+            repo._push_with_retry()
+
+        assert exc_info.value.permanent is True
+        assert exc_info.value.attempts == 1
+        assert calls == [['push']]
+
+    def test_remote_rejection_is_permanent(self, tmp_path, monkeypatch):
+        repo = GitRepository(str(tmp_path))
+        calls = []
+
+        def rejected(args, cwd=None, timeout=None):
+            calls.append(args)
+            return 1, '', '! [remote rejected] main -> main (pre-receive hook declined)'
+
+        monkeypatch.setattr(repo, '_run', rejected)
+
+        with pytest.raises(GitPushError) as exc_info:
+            repo._push_with_retry()
+
+        assert exc_info.value.permanent is True
+        assert len(calls) == 1
+
+    def test_transient_push_retries_then_succeeds(self, tmp_path, monkeypatch):
+        repo = GitRepository(str(tmp_path))
+        outcomes = iter([
+            (1, '', 'connection timed out'),
+            (1, '', 'temporary failure resolving host'),
+            (0, '', ''),
+        ])
+        sleeps = []
+        monkeypatch.setattr(repo, '_run', lambda *args, **kwargs: next(outcomes))
+        monkeypatch.setattr('git_ops.time.sleep', sleeps.append)
+
+        assert repo._push_with_retry() is True
+        assert sleeps == [2, 4]
+
+    def test_transient_push_exhaustion_raises(self, tmp_path, monkeypatch):
+        repo = GitRepository(str(tmp_path))
+        calls = []
+
+        def unavailable(*args, **kwargs):
+            calls.append(1)
+            return 1, '', 'connection timed out'
+
+        monkeypatch.setattr(repo, '_run', unavailable)
+        monkeypatch.setattr('git_ops.time.sleep', lambda _: None)
+
+        with pytest.raises(GitPushError) as exc_info:
+            repo._push_with_retry()
+
+        assert exc_info.value.permanent is False
+        assert exc_info.value.attempts == 4
+        assert len(calls) == 4
+
+    @pytest.mark.parametrize('failed_operation', ['status', 'add', 'commit'])
+    def test_required_local_git_failure_raises(
+        self, tmp_path, monkeypatch, failed_operation,
+    ):
+        repo_path = tmp_path / 'repo'
+        _init_repo(repo_path)
+        (repo_path / 'changed.json').write_text('{}')
+        repo = GitRepository(str(repo_path))
+        original_run = repo._run
+
+        def fail_selected(args, cwd=None, timeout=300):
+            if args[0] == failed_operation:
+                return 1, '', f'{failed_operation} failed deliberately'
+            return original_run(args, cwd=cwd, timeout=timeout)
+
+        monkeypatch.setattr(repo, '_run', fail_selected)
+
+        with pytest.raises(GitOperationError) as exc_info:
+            repo.push()
+
+        assert exc_info.value.operation == failed_operation
+
+
+class _RecordingRepo:
+    def __init__(self, result=False, error=None):
+        self.result = result
+        self.error = error
+        self.calls = 0
+        self.validation_calls = 0
+
+    def validate_output(self):
+        self.validation_calls += 1
+
+    def push(self):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return self.result
+
+
+class TestFailClosedPushOrder:
+    def test_scripture_failure_prevents_hash_attempt(self):
+        error = GitPushError('/scripture', 'GH001', attempts=1, permanent=True)
+        scripture = _RecordingRepo(error=error)
+        hashes = _RecordingRepo(result=True)
+
+        with pytest.raises(GitPushError):
+            push_all_repos(scripture, hashes)
+
+        assert scripture.calls == 1
+        assert hashes.calls == 0
+
+    def test_no_changes_is_not_a_failure_and_hash_is_attempted(self):
+        scripture = _RecordingRepo(result=False)
+        hashes = _RecordingRepo(result=False)
+
+        assert push_all_repos(scripture, hashes) is False
+        assert scripture.calls == 1
+        assert hashes.calls == 1
+
+    def test_hash_failure_propagates_after_scripture_success(self):
+        scripture = _RecordingRepo(result=True)
+        error = GitOperationError('commit', '/hash', 'failed')
+        hashes = _RecordingRepo(error=error)
+
+        with pytest.raises(GitOperationError):
+            push_all_repos(scripture, hashes)
+
+        assert scripture.calls == 1
+        assert hashes.calls == 1
+
+    def test_hash_preflight_failure_prevents_any_commit_or_push(self):
+        scripture = _RecordingRepo(result=True)
+        hashes = _RecordingRepo(result=True)
+
+        def fail_validation():
+            hashes.validation_calls += 1
+            raise PublicationSafetyError('hash output too large')
+
+        hashes.validate_output = fail_validation
+
+        with pytest.raises(PublicationSafetyError, match='hash output too large'):
+            push_all_repos(scripture, hashes)
+
+        assert scripture.validation_calls == 1
+        assert hashes.validation_calls == 1
+        assert scripture.calls == 0
+        assert hashes.calls == 0

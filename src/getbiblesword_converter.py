@@ -11,12 +11,15 @@ from typing import Any
 from converter import ConversionConfig
 from file_ops import write_json_minified
 from getbiblesword_contract import (
-    CONTRACT_ID,
     byte_value_text,
     iter_contract,
     validate_contract,
 )
-from osis_parser import osis_plain_text, parse_osis_verse
+from osis_parser import (
+    osis_plain_text,
+    parse_osis_semantics,
+    parse_osis_verse,
+)
 
 
 class ConversionError(ValueError):
@@ -30,13 +33,13 @@ def _text(value: Any, location: str) -> str:
 
 
 def _entry_text(record: dict[str, Any], markup: str) -> str:
-    """Decode SWORD's stripped view, with a lossless OSIS fallback.
+    """Decode SWORD's stripped view, with a safe OSIS fallback.
 
     Some official SWORD filters can return a malformed UTF-8 stripped
     projection even when a UTF-8 module's authoritative raw OSIS is intact.
-    The malformed bytes remain preserved in ``source.stripped``. For the
-    backward-compatible display field, derive visible text from valid raw OSIS
-    (or the valid rendered OSIS projection) instead of replacing bytes.
+    For the backward-compatible display field, derive visible text from valid
+    raw OSIS (or the valid rendered OSIS projection).  All projection envelopes
+    are discarded after conversion and are never emitted into the API.
     """
 
     try:
@@ -61,12 +64,12 @@ def _entry_text(record: dict[str, Any], markup: str) -> str:
 
 
 def _osis_for_tokens(record: dict[str, Any], markup: str) -> str | None:
-    """Return a valid OSIS projection for optional token enrichment.
+    """Return a valid OSIS projection for semantic enrichment.
 
-    Raw contract bytes are authoritative and remain preserved verbatim in the
-    source envelope, but legacy SWORD modules can contain isolated malformed or
-    truncated UTF-8 sequences. Token extraction is additive, so an unusable raw
-    projection must not make an otherwise valid verse or complete build fail.
+    Raw contract bytes are authoritative build inputs, but legacy SWORD modules
+    can contain isolated malformed or truncated UTF-8 sequences.  Token and
+    structural extraction are additive, so an unusable raw projection must not
+    make an otherwise valid verse or complete build fail.
     """
 
     if markup.lower() != "osis":
@@ -81,37 +84,13 @@ def _osis_for_tokens(record: dict[str, Any], markup: str) -> str | None:
     return None
 
 
-def _without_framing(record: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in record.items()
-        if key not in {"sequence", "type"}
-    }
-
-
-def _entry_source(record: dict[str, Any]) -> dict[str, Any]:
-    """Keep every exporter projection and its exact authoritative bytes."""
-
-    return {
-        "contract": CONTRACT_ID,
-        "entry_ordinal": record["ordinal"],
-        "key": record["key"],
-        "scope": record["scope"],
-        "raw": record["raw"],
-        "rendered_default": record.get("rendered_default"),
-        "stripped": record.get("stripped"),
-        "projections_available": record.get("projections_available", False),
-        "official_attributes": record.get("official_attributes", []),
-        "annotation_segments": record.get("annotation_segments", []),
-    }
-
-
 class GetBibleSwordConverter:
-    """Build backward-compatible Bible JSON from a lossless native contract.
+    """Build backward-compatible Bible JSON from a validated native contract.
 
-    Existing fields remain unchanged. The additive ``source`` envelope retains
-    the exact raw entry, SWORD projections, attributes, and lexical annotations.
-    Introduction entries are attached at translation, book, or chapter level.
+    Existing API fields remain unchanged.  Lossless records are transient build
+    inputs: byte envelopes, source/config records, and annotation segments are
+    not copied into the static API.  Compact paragraph/title semantics and
+    complete derived token/span data are retained instead.
     """
 
     def __init__(
@@ -136,140 +115,62 @@ class GetBibleSwordConverter:
             expected_module=module_name,
             expected_classification="bible",
         )
+        if summary.unknown_record_types:
+            unsupported = ", ".join(summary.unknown_record_types)
+            raise ConversionError(
+                "validated contract contains unmapped record types: "
+                f"{unsupported}"
+            )
 
-        header: dict[str, Any] | None = None
         module: dict[str, Any] | None = None
-        config_sources: list[dict[str, Any]] = []
-        config_entries: list[dict[str, Any]] = []
-        diagnostics: list[dict[str, Any]] = []
-        unknown_records: list[dict[str, Any]] = []
-        entries: list[dict[str, Any]] = []
-        known = {
-            "header",
-            "module",
-            "config_source",
-            "config_entry",
-            "entry",
-            "artifact_begin",
-            "artifact_chunk",
-            "artifact_end",
-            "diagnostic",
-            "footer",
-        }
-        for record in iter_contract(contract_path):
-            record_type = record["type"]
-            if record_type == "header":
-                header = record
-            elif record_type == "module":
-                module = record
-            elif record_type == "config_source":
-                config_sources.append(_without_framing(record))
-            elif record_type == "config_entry":
-                config_entries.append(_without_framing(record))
-            elif record_type == "entry":
-                entries.append(record)
-            elif record_type == "diagnostic":
-                diagnostics.append(_without_framing(record))
-            elif record_type not in known:
-                unknown_records.append(record)
-        if header is None or module is None:
-            raise ConversionError("validated contract is missing required records")
-
-        module_name = summary.module_name
-        abbreviation = self._config.translation_names.get(
-            module_name, module_name.lower()
-        )
-        config_map = self._configuration_map(config_entries)
-        language_code = config_map.get(
-            "lang", _text(module.get("language"), "module.language")
-        )
-        description = config_map.get(
-            "description", _text(module.get("description"), "module.description")
-        )
-        translation = self._config.v1_translations.get(
-            abbreviation, description or module_name
-        )
-        direction = module.get("direction", {}).get("name", "ltr").upper()
-        encoding = config_map.get(
-            "encoding", module.get("encoding", {}).get("name", "")
-        )
-        markup = module.get("markup", {}).get("name", "")
-
-        shared_meta = {
-            "translation": translation,
-            "abbreviation": abbreviation,
-            "lang": self._config.lang_correction.get(
-                language_code, language_code
-            ),
-            "language": self._config.language_names.get(language_code, ""),
-            "direction": self._config.text_direction.get(
-                language_code, direction
-            ),
-            "encoding": encoding,
-            "source_contract": {
-                "contract": CONTRACT_ID,
-                "producer": header.get("producer"),
-                "producer_version": summary.producer_version,
-                "sword_version": summary.sword_version,
-                "stream_sha256": summary.stream_sha256,
-                "entries": summary.entries,
-                "artifacts": summary.artifacts,
-                "artifact_bytes": summary.artifact_bytes,
-            },
-        }
-        bible: dict[str, Any] = {
-            **shared_meta,
-            "description": description,
-            "books": [],
-            "source": {
-                "module": _without_framing(module),
-                "config_sources": config_sources,
-                "config_entries": config_entries,
-                "diagnostics": diagnostics,
-                "unknown_records": unknown_records,
-            },
-        }
+        config_map: dict[str, str] = {}
+        shared_meta: dict[str, Any] | None = None
+        bible: dict[str, Any] | None = None
+        abbreviation = ""
+        markup = ""
         books: OrderedDict[int, dict[str, Any]] = OrderedDict()
 
-        for record in entries:
-            scope = record.get("scope")
-            if not isinstance(scope, dict) or scope.get("type") != "verse_key":
-                bible.setdefault("unscoped_entries", []).append(
-                    _entry_source(record)
+        # Validation is a bounded first pass over the untrusted contract.  The
+        # conversion pass never retains complete entry records: each entry is
+        # projected and discarded immediately.  This prevents a 500 MiB
+        # contract from expanding into multiple GiB of Python objects.
+        for record in iter_contract(contract_path):
+            record_type = record["type"]
+            if record_type == "module":
+                module = record
+            elif record_type == "config_entry":
+                self._add_configuration_entry(config_map, record)
+            elif record_type == "entry":
+                if module is None:
+                    raise ConversionError(
+                        "validated contract entry precedes its module record"
+                    )
+                if bible is None:
+                    abbreviation, markup, shared_meta, bible = (
+                        self._initialize_documents(
+                            module,
+                            summary.module_name,
+                            config_map,
+                        )
+                    )
+                self._consume_entry(
+                    bible,
+                    books,
+                    record,
+                    markup,
+                    abbreviation,
                 )
-                continue
-            intro_scope = scope.get("intro_scope")
-            if intro_scope != "verse":
-                self._attach_introduction(bible, books, record, markup)
-                continue
-            chapter_number = scope.get("chapter")
-            verse_number = scope.get("verse")
-            if not isinstance(chapter_number, int) or chapter_number <= 0:
-                raise ConversionError(
-                    f"invalid chapter scope in entry {record.get('ordinal')}"
-                )
-            if not isinstance(verse_number, int) or verse_number <= 0:
-                raise ConversionError(
-                    f"invalid verse scope in entry {record.get('ordinal')}"
-                )
-            book = self._book_for_scope(books, scope, abbreviation)
-            chapter = book["_chapters"].setdefault(
-                chapter_number,
-                {
-                    "chapter": chapter_number,
-                    "name": f"{book['name']} {chapter_number}",
-                    "verses": [],
-                },
+
+        if module is None:
+            raise ConversionError("validated contract is missing its module record")
+        if bible is None:
+            abbreviation, markup, shared_meta, bible = self._initialize_documents(
+                module,
+                summary.module_name,
+                config_map,
             )
-            verse = self._verse(
-                record,
-                book["name"],
-                chapter_number,
-                verse_number,
-                markup,
-            )
-            if verse is not None:
-                chapter["verses"].append(verse)
+        if shared_meta is None:
+            raise ConversionError("failed to initialize API metadata")
 
         output_root = Path(self._output_path)
         output_root.mkdir(parents=True, exist_ok=True)
@@ -300,6 +201,8 @@ class GetBibleSwordConverter:
                 "name": book["name"],
                 "chapters": chapters,
             }
+            if "titles" in book:
+                book_data["titles"] = book["titles"]
             if "introduction" in book:
                 book_data["introduction"] = book["introduction"]
             write_json_minified(
@@ -312,23 +215,117 @@ class GetBibleSwordConverter:
         write_json_minified(bible, str(version_path))
         return str(version_path)
 
+    def _initialize_documents(
+        self,
+        module: dict[str, Any],
+        module_name: str,
+        config_map: dict[str, str],
+    ) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
+        """Create lean API metadata after all ordered config records are read."""
+
+        abbreviation = self._config.translation_names.get(
+            module_name, module_name.lower()
+        )
+        language_code = config_map.get(
+            "lang", _text(module.get("language"), "module.language")
+        )
+        description = config_map.get(
+            "description", _text(module.get("description"), "module.description")
+        )
+        translation = self._config.v1_translations.get(
+            abbreviation, description or module_name
+        )
+        direction = module.get("direction", {}).get("name", "ltr").upper()
+        encoding = config_map.get(
+            "encoding", module.get("encoding", {}).get("name", "")
+        )
+        markup = module.get("markup", {}).get("name", "")
+
+        shared_meta = {
+            "translation": translation,
+            "abbreviation": abbreviation,
+            "lang": self._config.lang_correction.get(
+                language_code, language_code
+            ),
+            "language": self._config.language_names.get(language_code, ""),
+            "direction": self._config.text_direction.get(
+                language_code, direction
+            ),
+            "encoding": encoding,
+        }
+        bible: dict[str, Any] = {
+            **shared_meta,
+            "description": description,
+            "books": [],
+        }
+        return abbreviation, markup, shared_meta, bible
+
     @staticmethod
-    def _configuration_map(
-        entries: list[dict[str, Any]],
-    ) -> dict[str, str]:
-        values: dict[str, str] = {}
-        for entry in entries:
-            try:
-                name = byte_value_text(
-                    entry["name"], location="config_entry.name"
-                ).lower()
-                value = byte_value_text(
-                    entry["value"], location="config_entry.value"
-                )
-            except UnicodeDecodeError:
-                continue
-            values[name] = value
-        return values
+    def _add_configuration_entry(
+        values: dict[str, str],
+        entry: dict[str, Any],
+    ) -> None:
+        """Decode only the config value needed by the API, then drop its record."""
+
+        try:
+            name = byte_value_text(
+                entry["name"], location="config_entry.name"
+            ).lower()
+            value = byte_value_text(
+                entry["value"], location="config_entry.value"
+            )
+        except UnicodeDecodeError:
+            return
+        values[name] = value
+
+    def _consume_entry(
+        self,
+        bible: dict[str, Any],
+        books: OrderedDict[int, dict[str, Any]],
+        record: dict[str, Any],
+        markup: str,
+        abbreviation: str,
+    ) -> None:
+        """Project one validated entry and immediately release its envelopes."""
+
+        scope = record.get("scope")
+        if not isinstance(scope, dict) or scope.get("type") != "verse_key":
+            # Domain-incompatible entries have no stable Scripture API address.
+            # The validated NDJSON remains the build input for this run, but its
+            # raw record is intentionally not copied into public JSON.
+            return
+        if scope.get("intro_scope") != "verse":
+            self._attach_introduction(bible, books, record, markup)
+            return
+
+        chapter_number = scope.get("chapter")
+        verse_number = scope.get("verse")
+        if not isinstance(chapter_number, int) or chapter_number <= 0:
+            raise ConversionError(
+                f"invalid chapter scope in entry {record.get('ordinal')}"
+            )
+        if not isinstance(verse_number, int) or verse_number <= 0:
+            raise ConversionError(
+                f"invalid verse scope in entry {record.get('ordinal')}"
+            )
+        book = self._book_for_scope(books, scope, abbreviation)
+        chapter = book["_chapters"].setdefault(
+            chapter_number,
+            {
+                "chapter": chapter_number,
+                "name": f"{book['name']} {chapter_number}",
+                "verses": [],
+            },
+        )
+        verse = self._verse(
+            record,
+            book["name"],
+            chapter_number,
+            verse_number,
+            markup,
+        )
+        if verse is not None:
+            chapter["verses"].append(verse)
 
     def _book_for_scope(
         self,
@@ -392,23 +389,23 @@ class GetBibleSwordConverter:
         markup: str,
     ) -> None:
         scope = record["scope"]
-        introduction = {
-            "scope": scope,
-            "text": _entry_text(record, markup),
-            "source": _entry_source(record),
-        }
         intro_scope = scope.get("intro_scope")
         if intro_scope in {"module", "testament"}:
-            bible.setdefault("introductions", []).append(introduction)
+            target = bible
+        elif intro_scope in {"book", "chapter"}:
+            book = self._book_for_scope(
+                books, scope, bible["abbreviation"]
+            )
+            target = book
+        else:
             return
-        book = self._book_for_scope(
-            books, scope, bible["abbreviation"]
-        )
-        if intro_scope == "book":
-            book.setdefault("introduction", []).append(introduction)
-            return
+
         if intro_scope == "chapter":
             chapter_number = scope.get("chapter")
+            if not isinstance(chapter_number, int) or chapter_number <= 0:
+                raise ConversionError(
+                    f"invalid chapter introduction at entry {record.get('ordinal')}"
+                )
             chapter = book["_chapters"].setdefault(
                 chapter_number,
                 {
@@ -417,11 +414,36 @@ class GetBibleSwordConverter:
                     "verses": [],
                 },
             )
-            chapter.setdefault("introduction", []).append(introduction)
-            return
-        bible.setdefault("unscoped_entries", []).append(
-            _entry_source(record)
-        )
+            target = chapter
+
+        osis = _osis_for_tokens(record, markup)
+        semantics = parse_osis_semantics(osis) if osis is not None else {}
+        self._merge_semantics(target, semantics)
+
+        text = _entry_text(record, markup)
+        visible_text = text.strip()
+        title_texts = {
+            title["text"]
+            for title in semantics.get("titles", [])
+            if isinstance(title.get("text"), str)
+        }
+        # Structural book/chapter entries commonly strip to whitespace while
+        # their useful title remains in raw OSIS.  Store actual prose as an
+        # introduction, but do not duplicate a promoted title string.
+        if visible_text and visible_text not in title_texts:
+            target.setdefault("introduction", []).append({"text": text})
+
+    @staticmethod
+    def _merge_semantics(
+        target: dict[str, Any],
+        semantics: dict[str, Any],
+    ) -> None:
+        """Merge ordered structural semantics without duplicating titles."""
+
+        for title in semantics.get("titles", []):
+            titles = target.setdefault("titles", [])
+            if title not in titles:
+                titles.append(title)
 
     @staticmethod
     def _verse(
@@ -439,10 +461,14 @@ class GetBibleSwordConverter:
             "verse": verse_number,
             "name": f"{book_name} {chapter}:{verse_number}",
             "text": text,
-            "source": _entry_source(record),
         }
         osis = _osis_for_tokens(record, markup)
         if osis is not None:
+            semantics = parse_osis_semantics(osis)
+            if semantics.get("paragraph"):
+                verse["paragraph"] = True
+            if semantics.get("titles"):
+                verse["titles"] = semantics["titles"]
             word_data = parse_osis_verse(osis, text)
             if word_data:
                 verse["tokens"] = word_data["tokens"]
