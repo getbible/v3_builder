@@ -13,7 +13,7 @@ Spans carry ``tag``, ``span`` (exact OSIS-marked text), optional ``attrs``,
 """
 
 import pytest
-from osis_parser import parse_osis_verse
+from osis_parser import parse_osis_semantics, parse_osis_verse
 
 
 def find_span(spans, tag, **attrs_match):
@@ -545,6 +545,106 @@ class TestSkipElements:
 
 
 # =========================================================================
+# Compact structural semantics
+# =========================================================================
+
+class TestStructuralSemantics:
+    @pytest.mark.parametrize('raw', [
+        '<milestone marker="¶" type="x-p"/><w lemma="strong:G1">Word</w>',
+        '<milestone marker="¶" subType="x-added" type="x-p"/>'
+        '<w lemma="strong:G1">Word</w>',
+        '<p><w lemma="strong:G1">Word</w></p>',
+        '<p sID="p1"/><w lemma="strong:G1">Word</w>',
+    ])
+    def test_paragraph_start_patterns(self, raw):
+        assert parse_osis_semantics(raw)['paragraph'] is True
+
+    def test_paragraph_end_milestone_is_not_a_start(self):
+        raw = '<p eID="p1"/><w lemma="strong:G1">Word</w>'
+        assert 'paragraph' not in parse_osis_semantics(raw)
+
+    def test_kjv_chapter_title_is_deduplicated(self):
+        raw = (
+            '<chapter chapterTitle="CHAPTER 1." osisID="Gen.1" sID="gen30"/> '
+            '<title type="chapter">CHAPTER 1.</title>'
+        )
+        assert parse_osis_semantics(raw)['titles'] == [
+            {'type': 'chapter', 'text': 'CHAPTER 1.'}
+        ]
+
+    def test_chapter_title_attribute_is_a_fallback(self):
+        raw = '<chapter chapterTitle="PSALM 1." osisID="Ps.1" sID="p1"/>'
+        assert parse_osis_semantics(raw)['titles'] == [
+            {'type': 'chapter', 'text': 'PSALM 1.'}
+        ]
+
+    def test_closing_chapter_milestone_is_not_a_verse_title(self):
+        raw = (
+            '<w lemma="strong:H06">shall perish</w>. '
+            '<chapter chapterTitle="PSALM 1." eID="gen526" osisID="Ps.1"/>'
+        )
+        assert 'titles' not in parse_osis_semantics(raw)
+
+    def test_kjv_psalm_superscription_keeps_word_data(self):
+        raw = (
+            '<div type="x-milestone" subType="x-preverse" sID="pv1"/>'
+            '<title canonical="true" type="psalm">'
+            '<w lemma="strong:H04210">A Psalm</w> '
+            '<w lemma="strong:H01732">of David</w>, '
+            '<w lemma="strong:H01272" morph="strongMorph:TH8800">'
+            'when he fled</w> '
+            '<w lemma="strong:H06440">from</w> '
+            '<w lemma="strong:H053">Absalom</w> '
+            '<w lemma="strong:H01121">his son</w>.'
+            '</title>'
+            '<div type="x-milestone" subType="x-preverse" eID="pv1"/>'
+            '<w lemma="strong:H03068"><divineName>Lord</divineName></w>'
+        )
+        title = parse_osis_semantics(raw)['titles'][0]
+        assert title['type'] == 'psalm'
+        assert title['canonical'] is True
+        assert title['text'] == (
+            'A Psalm of David, when he fled from Absalom his son.'
+        )
+        assert title['tokens'][0]['lemma'] == {'strong': ['H04210']}
+        assert title['tokens'][-1]['word_end'] == 11
+        assert title['spans'] == []
+
+    def test_kjv_acrostic_title_keeps_foreign_visible_text(self):
+        raw = (
+            '<title canonical="true" type="acrostic">'
+            '<foreign xml:lang="hbo">א ALEPH.</foreign>'
+            '</title><w lemma="strong:H0835">Blessed</w>'
+        )
+        assert parse_osis_semantics(raw)['titles'] == [
+            {'type': 'acrostic', 'text': 'א ALEPH.', 'canonical': True}
+        ]
+
+    def test_book_title_keeps_inline_abbreviation(self):
+        raw = (
+            '<title type="main">THE GOSPEL ACCORDING TO '
+            '<abbr expansion="Saint">ST.</abbr> JOHN</title>'
+        )
+        assert parse_osis_semantics(raw)['titles'][0]['text'] == (
+            'THE GOSPEL ACCORDING TO ST. JOHN'
+        )
+
+    def test_title_notes_are_not_promoted_to_visible_text(self):
+        raw = (
+            '<title type="section">A heading'
+            '<note type="study">not visible</note></title>'
+        )
+        assert parse_osis_semantics(raw)['titles'][0]['text'] == 'A heading'
+
+    def test_malformed_semantic_markup_is_ignored(self):
+        assert parse_osis_semantics('<title type="section">broken') == {}
+
+    def test_unescaped_ampersand_recovery_applies_to_titles(self):
+        raw = '<title type="section">Law & Grace</title>'
+        assert parse_osis_semantics(raw)['titles'][0]['text'] == 'Law & Grace'
+
+
+# =========================================================================
 # Edge cases
 # =========================================================================
 
@@ -562,6 +662,12 @@ class TestEdgeCases:
         raw = '<w lemma="strong:G1234">bread &amp; wine</w>'
         result = parse_osis_verse(raw)
         assert result['tokens'][0]['token'] == 'bread & wine'
+
+    def test_bare_w_element_is_tokenized(self):
+        result = parse_osis_verse('<w>word</w>')
+        assert result['tokens'] == [
+            {'token': 'word', 'word_start': 1, 'word_end': 1}
+        ]
 
 
 # =========================================================================

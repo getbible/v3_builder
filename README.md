@@ -15,10 +15,12 @@ official SWORD engine through the separately released
 - Extracts every approved module into deterministic `getbiblesword.ndjson/v1`.
 - Independently verifies framing, byte envelopes, artifacts, counts, diagnostics,
   and the footer SHA-256 before Python sees trusted records.
-- Preserves raw entries, SWORD rendering/stripping, official attributes, lexical
-  annotations, exact configuration sources, and module artifacts.
-- Keeps the existing API shape and token/span fields while adding lossless `source`
-  envelopes and introduction records.
+- Validates raw entries, SWORD rendering/stripping, official attributes, lexical
+  annotations, exact configuration sources, and module artifacts before conversion.
+- Keeps the existing API shape and complete token/span fields while deriving compact
+  paragraph, title, and introduction semantics.
+- Treats module ZIPs, the SWORD installation, and lossless contracts as transient
+  working data and discards them after every build.
 - Applies a default-deny publication policy before a module can enter a build.
 - Keeps C++ extraction and Python API generation as independently releasable and
   testable projects.
@@ -34,7 +36,7 @@ not a production promotion, until the conformance and comparison gates in
 CrossWire ZIPs
   -> safe explicit SWORD root
   -> getbiblesword subprocess
-  -> one lossless NDJSON contract per module
+  -> one transient lossless NDJSON contract per module
   -> independent Python validator
   -> translation/book/chapter JSON
   -> existing hashes and publication repositories
@@ -111,28 +113,23 @@ These can also be set in `conf/.config` as `getbible.getbiblesword`,
 `getbible.contracts`, `getbible.sword-root`, and
 `getbible.publication-policy`.
 
-## API compatibility and preservation
+## API compatibility and semantic enrichment
 
 Translation, book, chapter, and verse fields used by current clients are retained.
-Every verse now also has a `source` object containing:
+The converter derives complete `tokens` and `spans` from OSIS word markup and
+promotes supported structural markup into compact API fields:
 
-- the exact SWORD key and canonical scope;
-- raw bytes as a verified base64 envelope, with UTF-8 when valid;
-- rendered-default and stripped projections;
-- all official entry attributes;
-- lossless annotation segments;
-- the native entry ordinal and contract identifier.
+- `paragraph: true` marks a verse that begins a new paragraph;
+- `titles` contains typed visible headings such as chapter titles and Psalm
+  superscriptions, including title token/span data when available;
+- module, testament, book, and chapter introduction text remains attached at its
+  natural structural level.
 
-The converter still derives `tokens` and `spans` from OSIS word markup. Module,
-testament, book, and chapter introduction entries are retained at their natural
-structural level. Exact configuration files and interpreted configuration entries
-are retained on the translation document.
-
-This means titles, paragraphs, notes, cross-references, poetry, variant readings,
-milestones, figures, references, word data, and unknown annotations are no longer
-discarded at the extraction boundary. Some are initially exposed through the
-lossless source envelope rather than a finalized semantic API field; that mapping
-can evolve without re-extracting or guessing at the source.
+Raw, rendered, stripped, configuration, annotation-segment, and filesystem byte
+envelopes are never copied into the published API. They are validated and used only
+while deriving the JSON, then discarded. Unknown contract records fail closed until
+a reviewed semantic mapping exists, preventing silent data loss without bloating
+every API response.
 
 ## Publication authorization
 
@@ -152,20 +149,21 @@ python -m pytest tests_integration/ -v --run-integration
 ```
 
 Unit tests require no native executable. They cover corrupt streams, sequence and
-footer verification, byte envelopes, artifact hashing, ZIP traversal/conflicts,
-publication authorization, and API source preservation. Integration tests require
-the resolved latest stable executable and download the real six-module test catalog.
+footer verification, byte envelopes, ZIP traversal/conflicts, publication
+authorization, semantic projection, publication size limits, and fail-closed Git
+behavior. Integration tests require the resolved latest stable executable and
+download the real six-module test catalog.
 
 The `Native GetBibleSWORD Smoke Test` workflow performs this real binary-backed
 integration on master, on a daily schedule, and by manual dispatch. The schedule
 is deliberate: a newly published GetBibleSWORD release is tested even when Builder
 has not changed.
 
-The `Build inspectable GetBible v3 preview` workflow builds six real modules and
-uploads two downloadable artifacts for 30 days: the generated static API files and
-the complete lossless NDJSON contracts. Each contract artifact includes
-`manifest.json`, which authenticates every complete contract file and records its
-entry, artifact, diagnostic, producer, and SWORD-engine facts.
+The `Test Build` workflow builds six real modules and uploads only the generated
+static API preview. Lossless contracts are not uploaded or cached. The manual
+`Inspect fresh KJV API output` workflow performs a fresh KJV-only build and prints
+bounded structure reports plus representative records for Psalms, John, and
+Revelation chapters 1–5 directly in the job log.
 
 ## Security and release notes
 
@@ -175,7 +173,9 @@ entry, artifact, diagnostic, producer, and SWORD-engine facts.
 - The latest stable release is resolved once per job; its exact asset is then
   checksum-verified and recorded before execution.
 - Artifact symlinks are validated as metadata but never created by Builder.
-- Unknown contract major versions are rejected; unknown v1 records are retained.
+- Unknown contract major versions and unmapped v1 records are rejected.
+- Generated files at or above 95 MiB are rejected before hashing or publication.
+- Scripture publication must complete before the hash repository is attempted.
 
 See [`AGENTS.md`](AGENTS.md) for contributor invariants.
 See [`docs/api-v3.md`](docs/api-v3.md) for the exact output layers and file layout.

@@ -79,9 +79,17 @@ Context elements (become spans):
     <number>       - numeric values (type: cardinal, ordinal, fractional)
     <unit>         - units of measurement
 
-Skip elements (content excluded, matching pysword OSISCleaner):
+Skip elements (content excluded from verse tokens, matching pysword
+OSISCleaner):
     <note>, <milestone>, <title>, <abbr>, <catchWord>, <index>,
     <rdg>, <rdgGroup>, <figure>
+
+Semantic elements:
+    <milestone type="x-p"> and opening <p> elements mark paragraph starts.
+    <title> elements are exposed separately with their visible text, type,
+    canonical flag, and any word-level token/span data they contain.
+    <chapter chapterTitle="..."> supplies a chapter title when no equivalent
+    <title type="chapter"> element is present.
 """
 
 import re
@@ -139,7 +147,7 @@ def parse_osis_verse(raw_text, clean_text=None):
         Every span carries word_start/word_end (1-based, inclusive) AND
         token_start/token_end (0-based index range into tokens[]).
     """
-    if not raw_text or '<w ' not in raw_text:
+    if not raw_text or not _contains_word_markup(raw_text):
         return None
 
     root = _parse_osis_fragment(raw_text)
@@ -158,6 +166,131 @@ def parse_osis_verse(raw_text, clean_text=None):
     _assign_word_positions(clean_text, tokens, spans)
 
     return {'tokens': tokens, 'spans': spans}
+
+
+def parse_osis_semantics(raw_text):
+    """Extract compact structural semantics from an OSIS entry.
+
+    The lossless GetBibleSWORD byte envelopes are build inputs rather than API
+    fields.  This projection keeps the small pieces a reader needs after those
+    envelopes are discarded:
+
+    - ``paragraph`` is true when the entry starts a paragraph through the
+      common OSIS ``x-p`` milestone or an opening ``p`` element;
+    - ``titles`` contains ordered title objects with normalized visible text,
+      semantic type, optional canonical/subtype metadata, and word-level data;
+    - ``chapterTitle`` is promoted to an equivalent chapter title when a
+      module supplies only the chapter milestone attribute.
+
+    Invalid XML is ignored here.  Structural enrichment is additive and must
+    not prevent a validated entry with a usable stripped projection from being
+    emitted.
+    """
+
+    if not raw_text:
+        return {}
+    root = _parse_osis_fragment(raw_text)
+    if root is None:
+        return {}
+
+    semantic = {}
+    titles = []
+    seen_titles = set()
+    chapter_titles = []
+
+    for element in root.iter():
+        tag = _strip_ns(element.tag)
+        if tag == 'milestone' and element.get('type') == 'x-p':
+            semantic['paragraph'] = True
+        elif tag == 'p' and element.get('eID') is None:
+            semantic['paragraph'] = True
+        elif tag == 'title':
+            title = _semantic_title(element)
+            if title is not None:
+                identity = _title_identity(title)
+                if identity not in seen_titles:
+                    seen_titles.add(identity)
+                    titles.append(title)
+        elif tag == 'chapter' and element.get('eID') is None:
+            chapter_title = _normalize_visible_text(
+                element.get('chapterTitle', '')
+            )
+            if chapter_title:
+                chapter_titles.append(chapter_title)
+
+    for text in chapter_titles:
+        fallback = {'type': 'chapter', 'text': text}
+        identity = _title_identity(fallback)
+        if identity not in seen_titles:
+            seen_titles.add(identity)
+            titles.append(fallback)
+
+    if titles:
+        semantic['titles'] = titles
+    return semantic
+
+
+def _semantic_title(element):
+    """Build one compact title object from a parsed OSIS title element."""
+
+    text = _normalize_visible_text(_semantic_visible_text(element))
+    if not text:
+        return None
+
+    title = {}
+    title_type = element.get('type')
+    if title_type:
+        title['type'] = title_type
+    title['text'] = text
+
+    canonical = _xml_boolean(element.get('canonical'))
+    if canonical is not None:
+        title['canonical'] = canonical
+    subtype = element.get('subType')
+    if subtype:
+        title['subtype'] = subtype
+
+    tokens = []
+    spans = []
+    for child in element:
+        _walk(child, tokens, spans)
+    if tokens:
+        _assign_word_positions(text, tokens, spans)
+        title['tokens'] = tokens
+        title['spans'] = spans
+    return title
+
+
+def _title_identity(title):
+    """Return the semantic identity used to suppress duplicate milestones."""
+
+    return (
+        title.get('type'),
+        title.get('text'),
+        title.get('canonical'),
+        title.get('subtype'),
+    )
+
+
+def _xml_boolean(value):
+    """Parse the standard XML boolean spellings, ignoring unknown values."""
+
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {'true', '1', 'yes'}:
+        return True
+    if normalized in {'false', '0', 'no'}:
+        return False
+    return None
+
+
+def _contains_word_markup(raw_text):
+    """Recognize attributed, bare, self-closing, and namespaced OSIS words."""
+
+    return re.search(
+        r'<(?:[A-Za-z_][\w.-]*:)?w(?:\s|/?>)', raw_text
+    ) is not None
 
 
 def osis_plain_text(raw_text):
@@ -535,6 +668,42 @@ def _full_text(element):
     parts = []
     _collect_text(element, parts)
     return ''.join(parts)
+
+
+_SEMANTIC_TEXT_SKIP_TAGS = frozenset({'note', 'figure', 'index'})
+
+
+def _semantic_visible_text(element):
+    """Return visible title text while retaining inline abbreviations.
+
+    Verse token extraction deliberately excludes ``title`` and ``abbr`` to
+    mirror the legacy cleaner.  A semantic title needs the opposite behavior:
+    ``ST.`` in a book title and Strong's-tagged Psalm superscriptions are part
+    of the title, while notes and non-textual figures are not.
+    """
+
+    parts = []
+    _collect_semantic_text(element, parts)
+    return ''.join(parts)
+
+
+def _collect_semantic_text(element, parts):
+    """Recursively collect visible semantic text in document order."""
+
+    if _strip_ns(element.tag) in _SEMANTIC_TEXT_SKIP_TAGS:
+        return
+    if element.text:
+        parts.append(element.text)
+    for child in element:
+        _collect_semantic_text(child, parts)
+        if child.tail:
+            parts.append(child.tail)
+
+
+def _normalize_visible_text(value):
+    """Collapse XML layout whitespace without altering visible characters."""
+
+    return re.sub(r'\s+', ' ', value).strip()
 
 
 def _collect_text(element, parts):

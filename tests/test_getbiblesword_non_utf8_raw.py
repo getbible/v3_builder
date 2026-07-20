@@ -52,10 +52,8 @@ def test_verse_uses_rendered_osis_when_raw_is_not_utf8():
     assert verse is not None
     assert verse["text"] == "book"
     assert verse["tokens"][0]["lemma"] == {"strong": ["G0976"]}
-    assert "utf8" not in verse["source"]["raw"]
-    assert verse["source"]["raw"]["base64"] == base64.b64encode(
-        MALFORMED_RAW
-    ).decode("ascii")
+    assert "source" not in verse
+    assert "titles" not in verse
 
 
 def test_verse_survives_when_no_osis_projection_is_utf8():
@@ -73,5 +71,5 @@ def test_verse_survives_when_no_osis_projection_is_utf8():
     assert verse["text"] == "book"
     assert "tokens" not in verse
     assert "spans" not in verse
-    assert "utf8" not in verse["source"]["raw"]
-    assert "utf8" not in verse["source"]["rendered_default"]
+    assert "source" not in verse
+    assert "titles" not in verse

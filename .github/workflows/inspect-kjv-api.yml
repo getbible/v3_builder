@@ -1,0 +1,67 @@
+name: "Inspect fresh KJV API output"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inspect-kjv-api-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    name: "Fresh KJV build + chapters 1-5 inspection"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      WORK_ROOT: ${{ runner.temp }}/getbible-kjv-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install latest stable GetBibleSWORD release
+        run: |
+          python scripts/install_getbiblesword.py
+          .tools/getbiblesword version
+          .tools/getbiblesword contract
+          python -m json.tool .tools/getbiblesword-release.json
+
+      - name: Build KJV from a fresh module download
+        env:
+          GETBIBLESWORD_BIN: ${{ github.workspace }}/.tools/getbiblesword
+        run: |
+          python src/builder.py --verbose \
+            --bconf=conf/CrosswireModulesMapKJVInspection.json \
+            --api="$WORK_ROOT/api" \
+            --zip="$WORK_ROOT/sword_zip" \
+            --contracts="$WORK_ROOT/sword_contracts" \
+            --sword-root="$WORK_ROOT/sword_root"
+
+      - name: Print and validate Psalms, John, and Revelation 1-5
+        run: |
+          python scripts/inspect_api_output.py \
+            --scripture-root="$WORK_ROOT/api_scripture" \
+            --output-root="$WORK_ROOT/api_scripture" \
+            --output-root="$WORK_ROOT/api" \
+            --abbreviation=kjv \
+            --size-limit-mib=95
+
+      - name: Discard transient module and extraction data
+        if: always()
+        run: |
+          rm -rf -- \
+            "$WORK_ROOT/sword_contracts" \
+            "$WORK_ROOT/sword_root" \
+            "$WORK_ROOT/sword_zip"
