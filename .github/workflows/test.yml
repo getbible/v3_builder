@@ -1,4 +1,4 @@
-name: "Test 6 Bible native JSON API build"
+name: "Bible Test API"
 
 on:
   push:

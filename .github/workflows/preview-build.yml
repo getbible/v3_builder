@@ -1,4 +1,4 @@
-name: "Build inspectable GetBible v3 preview"
+name: "Test Build"
 
 on:
   push:

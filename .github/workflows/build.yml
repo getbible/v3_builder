@@ -1,4 +1,4 @@
-name: "Build getBible static JSON API files"
+name: "Build API files"
 
 on:
   schedule:

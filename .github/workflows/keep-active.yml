@@ -1,4 +1,4 @@
-name: "Keep the builder repository active!"
+name: "Active!"
 
 on:
   # Run every Thursday at 02:22

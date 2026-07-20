@@ -1,4 +1,4 @@
-name: "Test Public Domain Bible API build"
+name: "Public Domain Bible API build"
 
 on:
   # Allow manual execution from any branch
