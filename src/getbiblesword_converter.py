@@ -34,7 +34,7 @@ def _entry_text(record: dict[str, Any], markup: str) -> str:
 
     Some official SWORD filters can return a malformed UTF-8 stripped
     projection even when a UTF-8 module's authoritative raw OSIS is intact.
-    The malformed bytes remain preserved in ``source.stripped``.  For the
+    The malformed bytes remain preserved in ``source.stripped``. For the
     backward-compatible display field, derive visible text from valid raw OSIS
     (or the valid rendered OSIS projection) instead of replacing bytes.
     """
@@ -60,8 +60,33 @@ def _entry_text(record: dict[str, Any], markup: str) -> str:
         ) from stripped_error
 
 
+def _osis_for_tokens(record: dict[str, Any], markup: str) -> str | None:
+    """Return a valid OSIS projection for optional token enrichment.
+
+    Raw contract bytes are authoritative and remain preserved verbatim in the
+    source envelope, but legacy SWORD modules can contain isolated malformed or
+    truncated UTF-8 sequences. Token extraction is additive, so an unusable raw
+    projection must not make an otherwise valid verse or complete build fail.
+    """
+
+    if markup.lower() != "osis":
+        return None
+    for projection in ("raw", "rendered_default"):
+        try:
+            value = _text(record.get(projection), f"entry.{projection}")
+        except UnicodeDecodeError:
+            continue
+        if value:
+            return value
+    return None
+
+
 def _without_framing(record: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in record.items() if key not in {"sequence", "type"}}
+    return {
+        key: value
+        for key, value in record.items()
+        if key not in {"sequence", "type"}
+    }
 
 
 def _entry_source(record: dict[str, Any]) -> dict[str, Any]:
@@ -84,17 +109,28 @@ def _entry_source(record: dict[str, Any]) -> dict[str, Any]:
 class GetBibleSwordConverter:
     """Build backward-compatible Bible JSON from a lossless native contract.
 
-    Existing fields remain unchanged.  The additive ``source`` envelope retains
+    Existing fields remain unchanged. The additive ``source`` envelope retains
     the exact raw entry, SWORD projections, attributes, and lexical annotations.
     Introduction entries are attached at translation, book, or chapter level.
     """
 
-    def __init__(self, config: ConversionConfig, output_path: str, *, conf_dir: str | None = None):
+    def __init__(
+        self,
+        config: ConversionConfig,
+        output_path: str,
+        *,
+        conf_dir: str | None = None,
+    ):
         self._config = config
         self._output_path = output_path
         self._conf_dir = conf_dir
 
-    def convert(self, contract_path: str, *, module_name: str | None = None) -> str:
+    def convert(
+        self,
+        contract_path: str,
+        *,
+        module_name: str | None = None,
+    ) -> str:
         summary = validate_contract(
             contract_path,
             expected_module=module_name,
@@ -109,8 +145,16 @@ class GetBibleSwordConverter:
         unknown_records: list[dict[str, Any]] = []
         entries: list[dict[str, Any]] = []
         known = {
-            "header", "module", "config_source", "config_entry", "entry",
-            "artifact_begin", "artifact_chunk", "artifact_end", "diagnostic", "footer",
+            "header",
+            "module",
+            "config_source",
+            "config_entry",
+            "entry",
+            "artifact_begin",
+            "artifact_chunk",
+            "artifact_end",
+            "diagnostic",
+            "footer",
         }
         for record in iter_contract(contract_path):
             record_type = record["type"]
@@ -132,23 +176,35 @@ class GetBibleSwordConverter:
             raise ConversionError("validated contract is missing required records")
 
         module_name = summary.module_name
-        abbreviation = self._config.translation_names.get(module_name, module_name.lower())
+        abbreviation = self._config.translation_names.get(
+            module_name, module_name.lower()
+        )
         config_map = self._configuration_map(config_entries)
-        language_code = config_map.get("lang", _text(module.get("language"), "module.language"))
+        language_code = config_map.get(
+            "lang", _text(module.get("language"), "module.language")
+        )
         description = config_map.get(
             "description", _text(module.get("description"), "module.description")
         )
-        translation = self._config.v1_translations.get(abbreviation, description or module_name)
+        translation = self._config.v1_translations.get(
+            abbreviation, description or module_name
+        )
         direction = module.get("direction", {}).get("name", "ltr").upper()
-        encoding = config_map.get("encoding", module.get("encoding", {}).get("name", ""))
+        encoding = config_map.get(
+            "encoding", module.get("encoding", {}).get("name", "")
+        )
         markup = module.get("markup", {}).get("name", "")
 
         shared_meta = {
             "translation": translation,
             "abbreviation": abbreviation,
-            "lang": self._config.lang_correction.get(language_code, language_code),
+            "lang": self._config.lang_correction.get(
+                language_code, language_code
+            ),
             "language": self._config.language_names.get(language_code, ""),
-            "direction": self._config.text_direction.get(language_code, direction),
+            "direction": self._config.text_direction.get(
+                language_code, direction
+            ),
             "encoding": encoding,
             "source_contract": {
                 "contract": CONTRACT_ID,
@@ -178,9 +234,9 @@ class GetBibleSwordConverter:
         for record in entries:
             scope = record.get("scope")
             if not isinstance(scope, dict) or scope.get("type") != "verse_key":
-                # A Bible driver should use VerseKey. Preserve an unexpected entry at
-                # translation level rather than silently throwing it away.
-                bible.setdefault("unscoped_entries", []).append(_entry_source(record))
+                bible.setdefault("unscoped_entries", []).append(
+                    _entry_source(record)
+                )
                 continue
             intro_scope = scope.get("intro_scope")
             if intro_scope != "verse":
@@ -189,9 +245,13 @@ class GetBibleSwordConverter:
             chapter_number = scope.get("chapter")
             verse_number = scope.get("verse")
             if not isinstance(chapter_number, int) or chapter_number <= 0:
-                raise ConversionError(f"invalid chapter scope in entry {record.get('ordinal')}")
+                raise ConversionError(
+                    f"invalid chapter scope in entry {record.get('ordinal')}"
+                )
             if not isinstance(verse_number, int) or verse_number <= 0:
-                raise ConversionError(f"invalid verse scope in entry {record.get('ordinal')}")
+                raise ConversionError(
+                    f"invalid verse scope in entry {record.get('ordinal')}"
+                )
             book = self._book_for_scope(books, scope, abbreviation)
             chapter = book["_chapters"].setdefault(
                 chapter_number,
@@ -202,7 +262,11 @@ class GetBibleSwordConverter:
                 },
             )
             verse = self._verse(
-                record, book["name"], chapter_number, verse_number, markup
+                record,
+                book["name"],
+                chapter_number,
+                verse_number,
+                markup,
             )
             if verse is not None:
                 chapter["verses"].append(verse)
@@ -226,7 +290,10 @@ class GetBibleSwordConverter:
                     "book_name": book["name"],
                     **chapter,
                 }
-                write_json_minified(chapter_data, str(book_directory / f"{chapter['chapter']}.json"))
+                write_json_minified(
+                    chapter_data,
+                    str(book_directory / f"{chapter['chapter']}.json"),
+                )
             book_data = {
                 **shared_meta,
                 "nr": book_number,
@@ -235,7 +302,10 @@ class GetBibleSwordConverter:
             }
             if "introduction" in book:
                 book_data["introduction"] = book["introduction"]
-            write_json_minified(book_data, str(output_root / abbreviation / f"{book_number}.json"))
+            write_json_minified(
+                book_data,
+                str(output_root / abbreviation / f"{book_number}.json"),
+            )
 
         bible.update(self._distribution_metadata(config_map, abbreviation))
         version_path = output_root / f"{abbreviation}.json"
@@ -243,12 +313,18 @@ class GetBibleSwordConverter:
         return str(version_path)
 
     @staticmethod
-    def _configuration_map(entries: list[dict[str, Any]]) -> dict[str, str]:
+    def _configuration_map(
+        entries: list[dict[str, Any]],
+    ) -> dict[str, str]:
         values: dict[str, str] = {}
         for entry in entries:
             try:
-                name = byte_value_text(entry["name"], location="config_entry.name").lower()
-                value = byte_value_text(entry["value"], location="config_entry.value")
+                name = byte_value_text(
+                    entry["name"], location="config_entry.name"
+                ).lower()
+                value = byte_value_text(
+                    entry["value"], location="config_entry.value"
+                )
             except UnicodeDecodeError:
                 continue
             values[name] = value
@@ -270,11 +346,17 @@ class GetBibleSwordConverter:
             elif testament == 2 and isinstance(testament_book, int):
                 book_number = 39 + testament_book
             else:
-                raise ConversionError(f"unknown SWORD book name {sword_name!r}")
+                raise ConversionError(
+                    f"unknown SWORD book name {sword_name!r}"
+                )
         if book_number not in books:
             default_name = self._config.book_names.get(sword_name, sword_name)
             display_name = self._resolve_book_name(
-                book_number, default_name, abbreviation, self._conf_dir, self._config
+                book_number,
+                default_name,
+                abbreviation,
+                self._conf_dir,
+                self._config,
             )
             books[book_number] = {
                 "nr": book_number,
@@ -284,13 +366,20 @@ class GetBibleSwordConverter:
         return books[book_number]
 
     @staticmethod
-    def _resolve_book_name(book_nr, default_name, abbreviation, conf_dir, config):
-        # Native builds are deterministic and offline: use checked-in localized
-        # names when present, otherwise the checked-in canonical mapping.
+    def _resolve_book_name(
+        book_nr,
+        default_name,
+        abbreviation,
+        conf_dir,
+        config,
+    ):
         if conf_dir:
-            local_path = os.path.join(conf_dir, f"books_{abbreviation}.json")
+            local_path = os.path.join(
+                conf_dir, f"books_{abbreviation}.json"
+            )
             if os.path.isfile(local_path):
                 import json
+
                 with open(local_path, "r", encoding="utf-8") as stream:
                     return json.load(stream).get(str(book_nr), default_name)
         return default_name
@@ -312,7 +401,9 @@ class GetBibleSwordConverter:
         if intro_scope in {"module", "testament"}:
             bible.setdefault("introductions", []).append(introduction)
             return
-        book = self._book_for_scope(books, scope, bible["abbreviation"])
+        book = self._book_for_scope(
+            books, scope, bible["abbreviation"]
+        )
         if intro_scope == "book":
             book.setdefault("introduction", []).append(introduction)
             return
@@ -328,7 +419,9 @@ class GetBibleSwordConverter:
             )
             chapter.setdefault("introduction", []).append(introduction)
             return
-        bible.setdefault("unscoped_entries", []).append(_entry_source(record))
+        bible.setdefault("unscoped_entries", []).append(
+            _entry_source(record)
+        )
 
     @staticmethod
     def _verse(
@@ -348,26 +441,34 @@ class GetBibleSwordConverter:
             "text": text,
             "source": _entry_source(record),
         }
-        raw = _text(record.get("raw"), "entry.raw")
-        word_data = parse_osis_verse(raw, text)
-        if word_data:
-            verse["tokens"] = word_data["tokens"]
-            verse["spans"] = word_data["spans"]
+        osis = _osis_for_tokens(record, markup)
+        if osis is not None:
+            word_data = parse_osis_verse(osis, text)
+            if word_data:
+                verse["tokens"] = word_data["tokens"]
+                verse["spans"] = word_data["spans"]
         return verse
 
     @staticmethod
-    def _distribution_metadata(config: dict[str, str], abbreviation: str) -> dict[str, Any]:
+    def _distribution_metadata(
+        config: dict[str, str],
+        abbreviation: str,
+    ) -> dict[str, Any]:
         return {
             "distribution_lcsh": config.get("lcsh", ""),
             "distribution_version": config.get("version", ""),
             "distribution_version_date": config.get("swordversiondate", ""),
-            "distribution_abbreviation": config.get("abbreviation", abbreviation),
+            "distribution_abbreviation": config.get(
+                "abbreviation", abbreviation
+            ),
             "distribution_about": config.get("about", ""),
             "distribution_license": config.get("distributionlicense", ""),
             "distribution_sourcetype": config.get("sourcetype", ""),
             "distribution_source": config.get("textsource", ""),
             "distribution_versification": config.get("versification", ""),
             "distribution_history": {
-                key: value for key, value in config.items() if "history" in key
+                key: value
+                for key, value in config.items()
+                if "history" in key
             },
         }
