@@ -4,6 +4,9 @@ import hashlib
 from getbiblesword_converter import GetBibleSwordConverter
 
 
+MALFORMED_RAW = b'<w lemma="strong:G0976">book</w>\xcf'
+
+
 def byte_value(data: bytes) -> dict:
     value = {
         "base64": base64.b64encode(data).decode("ascii"),
@@ -25,7 +28,7 @@ def verse_record(*, raw: bytes, rendered: bytes) -> dict:
         "scope": {"type": "verse_key", "intro_scope": "verse"},
         "raw": byte_value(raw),
         "rendered_default": byte_value(rendered),
-        "stripped": byte_value(b"The book of the generation"),
+        "stripped": byte_value(b"book"),
         "projections_available": True,
         "official_attributes": [],
         "annotation_segments": [],
@@ -34,7 +37,7 @@ def verse_record(*, raw: bytes, rendered: bytes) -> dict:
 
 def test_verse_uses_rendered_osis_when_raw_is_not_utf8():
     record = verse_record(
-        raw=b'<w lemma="strong:G0976">book</w>\xcf',
+        raw=MALFORMED_RAW,
         rendered=b'<w lemma="strong:G0976">book</w>',
     )
 
@@ -47,11 +50,11 @@ def test_verse_uses_rendered_osis_when_raw_is_not_utf8():
     )
 
     assert verse is not None
-    assert verse["text"] == "The book of the generation"
+    assert verse["text"] == "book"
     assert verse["tokens"][0]["lemma"] == {"strong": ["G0976"]}
     assert "utf8" not in verse["source"]["raw"]
     assert verse["source"]["raw"]["base64"] == base64.b64encode(
-        record["raw"] and b'<w lemma="strong:G0976">book</w>\xcf'
+        MALFORMED_RAW
     ).decode("ascii")
 
 
@@ -67,7 +70,7 @@ def test_verse_survives_when_no_osis_projection_is_utf8():
     )
 
     assert verse is not None
-    assert verse["text"] == "The book of the generation"
+    assert verse["text"] == "book"
     assert "tokens" not in verse
     assert "spans" not in verse
     assert "utf8" not in verse["source"]["raw"]
