@@ -39,6 +39,8 @@ def test_kjv_inspection_workflow_is_fresh_read_only_and_never_publishes():
     assert "actions/upload-artifact" not in workflow
     assert "--pull" not in workflow
     assert "--push" not in workflow
+    assert "${{ runner.temp }}" not in workflow
+    assert "$RUNNER_TEMP/getbible-kjv-" in workflow
     assert "sword_contracts" in workflow
     assert "rm -rf --" in workflow
 
