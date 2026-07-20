@@ -16,6 +16,12 @@ jobs:
           python3 -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install latest stable GetBibleSWORD release
+        run: |
+          python3 scripts/install_getbiblesword.py
+          .tools/getbiblesword version
+          python3 -m json.tool .tools/getbiblesword-release.json
+
       - name: Setup gitHub User Details
         uses: octoleo/git-user@v2
         with:
@@ -28,6 +34,7 @@ jobs:
 
       - name: Build the JSON Bible files
         env:
+          GETBIBLESWORD_BIN: ${{ github.workspace }}/.tools/getbiblesword
           HASH_REPO: ${{ secrets.GETBIBLE_HASH_REPO_T }}
           SCRIPTURE_REPO: ${{ secrets.GETBIBLE_SCRIPTURE_REPO_T }}
         run: |
