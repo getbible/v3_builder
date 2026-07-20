@@ -15,9 +15,10 @@ jobs:
     name: "Fresh KJV build + chapters 1-5 inspection"
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    env:
-      WORK_ROOT: ${{ runner.temp }}/getbible-kjv-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Allocate isolated runner workspace
+        run: echo "WORK_ROOT=$RUNNER_TEMP/getbible-kjv-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+
       - name: Checkout repository
         uses: actions/checkout@v6
 
