@@ -27,6 +27,36 @@ def test_native_build_workflows_install_and_select_getbiblesword(workflow_path):
     assert "GETBIBLESWORD_BIN: ${{ github.workspace }}/.tools/getbiblesword" in workflow
 
 
+@pytest.mark.parametrize(
+    "workflow_path", NATIVE_BUILD_WORKFLOWS, ids=lambda path: path.name
+)
+def test_publishing_workflows_require_an_explicit_growth_override(workflow_path):
+    workflow = workflow_path.read_text(encoding="utf-8")
+
+    assert "allow_output_growth:" in workflow
+    assert "default: false" in workflow
+    assert "ALLOW_OUTPUT_GROWTH: ${{ inputs.allow_output_growth || false }}" in workflow
+    assert 'if [[ "$ALLOW_OUTPUT_GROWTH" == "true" ]]' in workflow
+    assert "args+=(--allow-output-growth)" in workflow
+    assert "cancel-in-progress: false" in workflow
+
+
+def test_publishing_workflows_serialize_each_destination_repository():
+    production = (REPOSITORY_ROOT / ".github/workflows/build.yml").read_text(
+        encoding="utf-8"
+    )
+    test_build = (REPOSITORY_ROOT / ".github/workflows/test.yml").read_text(
+        encoding="utf-8"
+    )
+    public_domain = (
+        REPOSITORY_ROOT / ".github/workflows/test-public.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "group: getbible-v3-production-publication" in production
+    assert "group: getbible-v3-test-publication" in test_build
+    assert "group: getbible-v3-test-publication" in public_domain
+
+
 def test_kjv_inspection_workflow_is_fresh_read_only_and_never_publishes():
     workflow = KJV_INSPECTION_WORKFLOW.read_text(encoding="utf-8")
 

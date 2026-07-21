@@ -4,7 +4,57 @@ import json
 import os
 import pytest
 
-from file_ops import clean_empty_files, move_public_hash_files
+from file_ops import (
+    _CompleteTextWriter,
+    clean_empty_files,
+    move_public_hash_files,
+    write_json_minified,
+)
+
+
+def test_complete_text_writer_retries_short_writes():
+    class ShortStream:
+        def __init__(self):
+            self.value = ''
+
+        def write(self, value):
+            accepted = value[:3]
+            self.value += accepted
+            return len(accepted)
+
+    stream = ShortStream()
+
+    assert _CompleteTextWriter(stream).write('complete output') == 15
+    assert stream.value == 'complete output'
+
+
+def test_minified_json_write_is_atomic_on_serialization_failure(tmp_path):
+    target = tmp_path / 'publication.json'
+    original = '{"stable":true}\n'
+    target.write_text(original, encoding='utf-8')
+
+    with pytest.raises(TypeError):
+        write_json_minified(
+            {'serializable': 'written first', 'invalid': object()},
+            target,
+        )
+
+    assert target.read_text(encoding='utf-8') == original
+    assert list(tmp_path.glob('.publication.json.*.tmp')) == []
+
+
+def test_minified_json_write_replaces_target_with_complete_utf8(tmp_path):
+    target = tmp_path / 'publication.json'
+    target.write_text('{"old":true}\n', encoding='utf-8')
+    expected = {'text': 'ἐν ἀρχῇ', 'nested': [1, 2, 3]}
+
+    write_json_minified(expected, target)
+
+    content = target.read_text(encoding='utf-8')
+    assert json.loads(content) == expected
+    assert content == '{"text":"ἐν ἀρχῇ","nested":[1,2,3]}\n'
+    assert target.stat().st_mode & 0o777 == 0o644
+    assert list(tmp_path.glob('.publication.json.*.tmp')) == []
 
 
 @pytest.fixture

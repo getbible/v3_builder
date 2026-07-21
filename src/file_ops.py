@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ PUBLIC_FILE_PATTERNS = (
 
 
 def write_json_minified(data, output_file):
-    """Write ``data`` to ``output_file`` as minified JSON.
+    """Atomically write ``data`` to ``output_file`` as minified JSON.
 
     The v3 API output is built for download speed, not human reading:
     every byte of indentation we ship is bandwidth a client pays for.
@@ -47,9 +48,51 @@ def write_json_minified(data, output_file):
         data: JSON-serializable object to write.
         output_file: Destination path.
     """
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, separators=(',', ':'))
-        f.write('\n')
+    target = os.path.abspath(os.fspath(output_file))
+    directory = os.path.dirname(target)
+    basename = os.path.basename(target)
+    descriptor, temporary = tempfile.mkstemp(
+        dir=directory,
+        prefix=f'.{basename}.',
+        suffix='.tmp',
+    )
+    os.fchmod(descriptor, 0o644)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8', newline='\n') as stream:
+            writer = _CompleteTextWriter(stream)
+            json.dump(data, writer, ensure_ascii=False, separators=(',', ':'))
+            writer.write('\n')
+            stream.flush()
+        os.replace(temporary, target)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+class _CompleteTextWriter:
+    """Adapt a text stream so every JSON encoder write completes in full.
+
+    ``json.dump`` does not inspect the return value from the destination's
+    ``write`` method.  A short filesystem write can therefore leave syntactically
+    incomplete JSON without the encoder noticing.  Looping here closes that gap,
+    while the temporary-file replacement keeps the previous publication intact
+    if serialization raises for any other reason.
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, value):
+        offset = 0
+        while offset < len(value):
+            written = self._stream.write(value[offset:])
+            if not isinstance(written, int) or written <= 0:
+                raise OSError('short write while serializing publication JSON')
+            offset += written
+        return len(value)
 
 
 def clean_empty_files(scripture_path, min_size=500):

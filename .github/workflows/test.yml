@@ -5,6 +5,16 @@ on:
     branches:
       - staging
   workflow_dispatch:
+    inputs:
+      allow_output_growth:
+        description: "Allow reviewed JSON growth above 25% for this publication only"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: getbible-v3-test-publication
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -35,7 +45,16 @@ jobs:
           GETBIBLESWORD_BIN: ${{ github.workspace }}/.tools/getbiblesword
           HASH_REPO: ${{ secrets.GETBIBLE_HASH_REPO_T }}
           SCRIPTURE_REPO: ${{ secrets.GETBIBLE_SCRIPTURE_REPO_T }}
+          ALLOW_OUTPUT_GROWTH: ${{ inputs.allow_output_growth || false }}
         run: |
-          python3 src/builder.py --test --pull --push \
-            --repo-hash="$HASH_REPO" \
+          args=(
+            --test
+            --pull
+            --push
+            --repo-hash="$HASH_REPO"
             --repo-scripture="$SCRIPTURE_REPO"
+          )
+          if [[ "$ALLOW_OUTPUT_GROWTH" == "true" ]]; then
+            args+=(--allow-output-growth)
+          fi
+          python3 src/builder.py "${args[@]}"
