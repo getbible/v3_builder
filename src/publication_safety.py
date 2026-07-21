@@ -129,6 +129,21 @@ def validate_generated_output(
         raise ValueError("max_growth_ratio must not be negative")
 
     files = list(iter_generated_files(root, preserved_names))
+    incomplete_writes = [
+        item
+        for item in files
+        if os.path.basename(item.relative_path).startswith('.')
+        and item.relative_path.endswith('.tmp')
+    ]
+    if incomplete_writes:
+        details = "\n".join(
+            f"- {item.absolute_path}: {item.size:,} bytes"
+            for item in incomplete_writes
+        )
+        raise PublicationSafetyError(
+            "generated publication output contains incomplete atomic JSON "
+            f"writes; refuse to hash or publish:\n{details}"
+        )
     oversized = [item for item in files if item.size >= max_file_bytes]
     if oversized:
         details = "\n".join(

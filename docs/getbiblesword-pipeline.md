@@ -33,6 +33,18 @@ The build therefore fails closed. It does not publish a partial catalog when a
 module is missing, extraction or validation fails, an unmapped record appears, a
 generated file is unsafe or too large, or publication fails.
 
+When a reviewed API enrichment intentionally grows tracked JSON by more than
+25%, manually dispatch the publishing workflow with `allow_output_growth`
+enabled. The override applies only to that run and never bypasses the 95 MiB
+hard file ceiling. After the enlarged files are published, their committed sizes
+become the baseline and subsequent scheduled or manual builds run with the
+growth gate enabled normally.
+
+Publishing workflows are serialized per destination repository. JSON files are
+written through same-directory temporary files and atomically replaced; an
+incomplete temporary write is a publication error and cannot enter hashes or a
+Git commit.
+
 ## Lossless input, lean output
 
 The NDJSON contract is authoritative only while a build is running. Its base64

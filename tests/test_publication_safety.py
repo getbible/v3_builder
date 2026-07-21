@@ -94,6 +94,18 @@ def test_explicit_growth_override_never_bypasses_hard_ceiling(tmp_path):
         )
 
 
+def test_rejects_incomplete_atomic_json_writes_even_with_growth_override(tmp_path):
+    temporary = tmp_path / '.kjv.json.interrupted.tmp'
+    temporary.write_text('{"books":', encoding='utf-8')
+
+    with pytest.raises(PublicationSafetyError) as exc_info:
+        validate_generated_output(str(tmp_path), allow_growth=True)
+
+    message = str(exc_info.value)
+    assert str(temporary) in message
+    assert 'incomplete atomic JSON writes' in message
+
+
 def test_ignores_git_metadata_and_preserved_files(tmp_path):
     git_blob = tmp_path / ".git" / "objects" / "large"
     git_blob.parent.mkdir(parents=True)
