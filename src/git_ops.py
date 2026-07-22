@@ -13,7 +13,6 @@ import subprocess
 import time
 
 from publication_safety import (
-    DEFAULT_MAX_GROWTH_RATIO,
     MAX_PUBLISHED_FILE_BYTES,
     PublicationSafetyError,
     validate_generated_output,
@@ -99,15 +98,11 @@ class GitRepository:
         path,
         repo_url=None,
         *,
-        allow_output_growth=False,
         max_file_bytes=MAX_PUBLISHED_FILE_BYTES,
-        max_growth_ratio=DEFAULT_MAX_GROWTH_RATIO,
     ):
         self._path = path
         self._repo_url = repo_url
-        self._allow_output_growth = allow_output_growth
         self._max_file_bytes = max_file_bytes
-        self._max_growth_ratio = max_growth_ratio
 
     @property
     def path(self):
@@ -214,56 +209,12 @@ class GitRepository:
         return True
 
     def validate_output(self):
-        """Validate generated files against hard and historical size gates."""
-        baseline = self._tracked_json_sizes() if self.has_git else {}
-        if self._allow_output_growth:
-            log.warning(
-                'Tracked JSON growth gate explicitly overridden for %s; '
-                'the %.2f MiB hard file ceiling remains enforced',
-                self._path,
-                self._max_file_bytes / (1024 * 1024),
-            )
+        """Validate generated files against filesystem and hard-size gates."""
         return validate_generated_output(
             self._path,
-            baseline_json_sizes=baseline,
-            allow_growth=self._allow_output_growth,
             max_file_bytes=self._max_file_bytes,
-            max_growth_ratio=self._max_growth_ratio,
             preserved_names=self._PRESERVE,
         )
-
-    def _tracked_json_sizes(self):
-        """Return exact byte sizes of JSON blobs tracked at ``HEAD``."""
-        rc, _, _ = self._run(
-            ['rev-parse', '--verify', 'HEAD'], cwd=self._path,
-        )
-        if rc != 0:
-            return {}
-        rc, stdout, stderr = self._run(
-            ['ls-tree', '-r', '-l', '-z', 'HEAD'], cwd=self._path,
-        )
-        if rc != 0:
-            raise PublicationSafetyError(
-                f'could not read publication baseline from {self._path}: {stderr}'
-            )
-
-        sizes = {}
-        for record in stdout.split('\0'):
-            if not record:
-                continue
-            metadata, separator, path = record.partition('\t')
-            fields = metadata.split()
-            if not separator or len(fields) != 4 or fields[1] != 'blob':
-                continue
-            if not path.endswith('.json'):
-                continue
-            try:
-                sizes[path] = int(fields[3])
-            except ValueError as exc:
-                raise PublicationSafetyError(
-                    f'invalid Git blob size for {path!r} in {self._path}: {fields[3]!r}'
-                ) from exc
-        return sizes
 
     def _push_with_retry(self):
         """Run `git push` with a large-repo timeout and retry on failure.

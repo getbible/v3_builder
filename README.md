@@ -15,19 +15,22 @@ official SWORD engine through the separately released
 - Extracts every approved module into deterministic `getbiblesword.ndjson/v1`.
 - Independently verifies framing, byte envelopes, artifacts, counts, diagnostics,
   and the footer SHA-256 before Python sees trusted records.
-- Validates raw entries, SWORD rendering/stripping, official attributes, lexical
-  annotations, exact configuration sources, and module artifacts before conversion.
+- Verifies raw entries, SWORD projections, attributes, configuration sources, and
+  artifacts as transport data before conversion.
 - Keeps the existing API shape and complete token/span fields while deriving compact
   paragraph, title, and introduction semantics.
+- Treats display text as multilingual content: valid UTF-8 is preserved and isolated
+  legacy Windows-1252/Latin-1 bytes are converted instead of rejecting the catalog.
 - Treats module ZIPs, the SWORD installation, and lossless contracts as transient
   working data and discards them after every build.
 - Applies a default-deny publication policy before a module can enter a build.
 - Keeps C++ extraction and Python API generation as independently releasable and
   testable projects.
 
-The integration follows the latest stable GetBibleSWORD release and records the
-exact resolved version and checksum for every build. It remains a review pipeline,
-not a production promotion, until the conformance and comparison gates in
+The daily integration follows the latest stable GetBibleSWORD release, while
+publishing workflows pin the reviewed compatible release. Every build records the
+exact resolved version and checksum. The integration remains under review until
+the conformance and comparison gates in
 [`docs/getbiblesword-pipeline.md`](docs/getbiblesword-pipeline.md) pass.
 
 ## Pipeline
@@ -42,14 +45,16 @@ CrossWire ZIPs
   -> existing hashes and publication repositories
 ```
 
-The build is fail-closed: one missing, unauthorized, corrupt, or unsuccessful
-module aborts the publishing build instead of producing a partial catalog.
+Transport and publication remain fail-closed: a missing, unauthorized, incomplete,
+or unsuccessful extraction cannot produce a partial catalog. Content projection is
+tolerant; an encoding irregularity or unusable optional markup cannot suppress an
+otherwise addressable verse.
 
 ## Requirements
 
 - Python 3.12+
 - Linux x86-64 or ARM64 for the published GetBibleSWORD release
-- Latest stable GetBibleSWORD release
+- Reviewed GetBibleSWORD release for publication; latest stable for smoke testing
 - `requests` for legacy configuration helpers
 - `pytest` for tests
 
@@ -79,7 +84,7 @@ release checksum file and GitHub asset digest, and writes the resolved provenanc
 to `.tools/getbiblesword-release.json`. Reproduction and incident investigation
 can request an exact release with `--version 0.1.1`.
 
-Run the six-module validation build or the full catalog:
+Run the representative-module validation build or the full catalog:
 
 ```bash
 python src/builder.py --test
@@ -131,6 +136,12 @@ while deriving the JSON, then discarded. Unknown contract records fail closed un
 a reviewed semantic mapping exists, preventing silent data loss without bloating
 every API response.
 
+Text envelopes are decoded independently from transport validation. Valid UTF-8
+sequences remain unchanged. If a historic module contains isolated single-byte text
+despite declaring UTF-8, undecodable bytes use the SWORD-compatible Windows-1252
+mapping with a total Latin-1 fallback. OSIS tokens and structure remain best-effort
+enrichment and are omitted when their source markup is not safe to parse.
+
 ## Publication authorization
 
 `conf/PublicationPolicy.json` starts with the 117 translations already present in
@@ -152,14 +163,14 @@ Unit tests require no native executable. They cover corrupt streams, sequence an
 footer verification, byte envelopes, ZIP traversal/conflicts, publication
 authorization, semantic projection, publication size limits, and fail-closed Git
 behavior. Integration tests require the resolved latest stable executable and
-download the real six-module test catalog.
+download a representative catalog that includes legacy GBF/Windows-1252 content.
 
 The `Native GetBibleSWORD Smoke Test` workflow performs this real binary-backed
 integration on master, on a daily schedule, and by manual dispatch. The schedule
 is deliberate: a newly published GetBibleSWORD release is tested even when Builder
 has not changed.
 
-The `Test Build` workflow builds six real modules and uploads only the generated
+The `Test Build` workflow builds the representative real modules and uploads only the generated
 static API preview. Lossless contracts are not uploaded or cached. The manual
 `Inspect fresh KJV API output` workflow performs a fresh KJV-only build and prints
 bounded structure reports plus representative records for Psalms, John, and

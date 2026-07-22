@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   preview:
-    name: "Latest binary + six real modules"
+    name: "Latest binary + representative modules"
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -47,7 +47,7 @@ jobs:
           .tools/getbiblesword contract
           python -m json.tool .tools/getbiblesword-release.json
 
-      - name: Build six-module preview
+      - name: Build representative-module preview
         env:
           GETBIBLESWORD_BIN: ${{ github.workspace }}/.tools/getbiblesword
         run: python src/builder.py --test --verbose

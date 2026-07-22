@@ -5,11 +5,10 @@ from __future__ import annotations
 import os
 import stat
 from dataclasses import dataclass
-from typing import Iterable, Mapping
+from typing import Iterable
 
 
 MAX_PUBLISHED_FILE_BYTES = 95 * 1024 * 1024
-DEFAULT_MAX_GROWTH_RATIO = 0.25
 
 
 class PublicationSafetyError(RuntimeError):
@@ -110,23 +109,19 @@ def iter_generated_files(root: str, preserved_names: Iterable[str] = ()):
 def validate_generated_output(
     root: str,
     *,
-    baseline_json_sizes: Mapping[str, int] | None = None,
-    allow_growth: bool = False,
     max_file_bytes: int = MAX_PUBLISHED_FILE_BYTES,
-    max_growth_ratio: float = DEFAULT_MAX_GROWTH_RATIO,
     preserved_names: Iterable[str] = (),
 ):
-    """Reject oversized files and unexpected growth of tracked generated JSON.
+    """Reject filesystem hazards and files GitHub cannot accept.
 
-    The absolute file ceiling is never bypassed. ``allow_growth`` only disables
-    comparison with the previous committed JSON blobs and is intended for an
-    explicitly reviewed schema expansion.
+    Content size may legitimately change whenever CrossWire updates a module or
+    Builder learns to project more of it.  Only the absolute per-file ceiling is
+    enforced; the builder does not try to infer upstream correctness from a
+    comparison with the previous publication.
     """
 
     if max_file_bytes <= 0:
         raise ValueError("max_file_bytes must be positive")
-    if max_growth_ratio < 0:
-        raise ValueError("max_growth_ratio must not be negative")
 
     files = list(iter_generated_files(root, preserved_names))
     incomplete_writes = [
@@ -155,49 +150,7 @@ def validate_generated_output(
             f"of {max_file_bytes:,} bytes ({_mib(max_file_bytes):.2f} MiB):\n{details}"
         )
 
-    if allow_growth or not baseline_json_sizes:
-        return files
-
-    growth = []
-    multiplier = 1.0 + max_growth_ratio
-    for item in files:
-        if not item.relative_path.endswith(".json"):
-            continue
-        baseline_size = baseline_json_sizes.get(item.relative_path)
-        if baseline_size is None:
-            continue
-        if baseline_size == 0:
-            if item.size > 0:
-                growth.append((item, baseline_size, float("inf")))
-            continue
-        ratio = item.size / baseline_size
-        if ratio > multiplier:
-            growth.append((item, baseline_size, ratio))
-
-    if growth:
-        details = "\n".join(
-            _format_growth(item, baseline_size, ratio)
-            for item, baseline_size, ratio in growth
-        )
-        raise PublicationSafetyError(
-            "tracked generated JSON exceeded the allowed growth of "
-            f"{max_growth_ratio:.0%}; review the schema change and rerun with the "
-            "explicit output-growth override if intentional:\n"
-            f"{details}"
-        )
-
     return files
-
-
-def _format_growth(item: GeneratedFile, baseline_size: int, ratio: float) -> str:
-    if ratio == float("inf"):
-        change = "new content from a 0-byte baseline"
-    else:
-        change = f"{ratio - 1.0:.2%} growth"
-    return (
-        f"- {item.absolute_path}: {item.size:,} bytes, previously "
-        f"{baseline_size:,} bytes ({change})"
-    )
 
 
 def _mib(size: int) -> float:

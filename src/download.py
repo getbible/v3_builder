@@ -45,10 +45,13 @@ def download_modules(module_names, output_path):
         file_path = os.path.join(output_path, f'{sword_name}.zip')
         log.info('[%d/%d] Processing %s', i, total, sword_name)
 
-        if os.path.isfile(file_path) and zipfile.is_zipfile(file_path):
+        if os.path.isfile(file_path) and _valid_zip(file_path):
             log.info('[%d/%d] %s.zip already exists', i, total, sword_name)
             downloaded.append(file_path)
             continue
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            log.warning('[%d/%d] Removed invalid cached %s.zip', i, total, sword_name)
 
         # Try RAW format first
         if _download_raw(sword_name, file_path):
@@ -77,20 +80,26 @@ def _download_raw(sword_name, file_path):
         True if downloaded and valid, False otherwise.
     """
     url = f'{_RAW_URL}/{sword_name}.zip'
+    temporary = file_path + '.part'
+    if os.path.exists(temporary):
+        os.remove(temporary)
 
     try:
         log.info('Downloading RAW format: %s', sword_name)
-        urllib.request.urlretrieve(url, file_path)
-    except urllib.error.HTTPError as e:
+        urllib.request.urlretrieve(url, temporary)
+    except (urllib.error.URLError, OSError) as e:
         log.warning('RAW download failed for %s: %s', sword_name, e)
+        if os.path.exists(temporary):
+            os.remove(temporary)
         return False
 
-    if zipfile.is_zipfile(file_path):
+    if _valid_zip(temporary):
+        os.replace(temporary, file_path)
         return True
 
     # Invalid zip — clean up
-    if os.path.exists(file_path):
-        os.remove(file_path)
+    if os.path.exists(temporary):
+        os.remove(temporary)
         log.warning('%s.zip (RAW) was invalid and removed', sword_name)
     return False
 
@@ -111,15 +120,19 @@ def _download_and_convert_win(sword_name, file_path, output_path):
     """
     url = f'{_WIN_URL}/{sword_name}.zip'
     win_zip_path = os.path.join(output_path, f'{sword_name}_win.zip')
+    raw_zip_path = file_path + '.part'
+    for temporary in (win_zip_path, raw_zip_path):
+        if os.path.exists(temporary):
+            os.remove(temporary)
 
     try:
         log.info('Downloading WIN format: %s', sword_name)
         urllib.request.urlretrieve(url, win_zip_path)
-    except urllib.error.HTTPError as e:
+    except (urllib.error.URLError, OSError) as e:
         log.warning('WIN download failed for %s: %s', sword_name, e)
         return False
 
-    if not zipfile.is_zipfile(win_zip_path):
+    if not _valid_zip(win_zip_path):
         if os.path.exists(win_zip_path):
             os.remove(win_zip_path)
             log.warning('%s.zip (WIN) was invalid and removed', sword_name)
@@ -150,7 +163,10 @@ def _download_and_convert_win(sword_name, file_path, output_path):
             os.rename(newmods, modsd)
 
         # Re-zip as RAW format
-        _create_zip(raw_path, file_path)
+        _create_zip(raw_path, raw_zip_path)
+        if not _valid_zip(raw_zip_path):
+            raise zipfile.BadZipFile('converted RAW archive failed validation')
+        os.replace(raw_zip_path, file_path)
         log.info('Converted %s to RAW format', sword_name)
         return True
 
@@ -164,6 +180,18 @@ def _download_and_convert_win(sword_name, file_path, output_path):
             shutil.rmtree(folder_path, ignore_errors=True)
         if os.path.exists(win_zip_path):
             os.remove(win_zip_path)
+        if os.path.exists(raw_zip_path):
+            os.remove(raw_zip_path)
+
+
+def _valid_zip(path):
+    """Return whether ``path`` is a complete, readable ZIP archive."""
+
+    try:
+        with zipfile.ZipFile(path, 'r') as archive:
+            return archive.testzip() is None
+    except (FileNotFoundError, OSError, zipfile.BadZipFile):
+        return False
 
 
 def _create_zip(source_dir, zip_path):

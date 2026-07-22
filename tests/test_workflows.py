@@ -12,6 +12,7 @@ NATIVE_BUILD_WORKFLOWS = (
 KJV_INSPECTION_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/inspect-kjv-api.yml"
 KJV_INSPECTION_MAP = REPOSITORY_ROOT / "conf/CrosswireModulesMapKJVInspection.json"
 PREVIEW_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/preview-build.yml"
+NATIVE_SMOKE_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/native-smoke.yml"
 
 
 @pytest.mark.parametrize(
@@ -30,14 +31,12 @@ def test_native_build_workflows_install_and_select_getbiblesword(workflow_path):
 @pytest.mark.parametrize(
     "workflow_path", NATIVE_BUILD_WORKFLOWS, ids=lambda path: path.name
 )
-def test_publishing_workflows_require_an_explicit_growth_override(workflow_path):
+def test_publishing_workflows_do_not_second_guess_content_growth(workflow_path):
     workflow = workflow_path.read_text(encoding="utf-8")
 
-    assert "allow_output_growth:" in workflow
-    assert "default: false" in workflow
-    assert "ALLOW_OUTPUT_GROWTH: ${{ inputs.allow_output_growth || false }}" in workflow
-    assert 'if [[ "$ALLOW_OUTPUT_GROWTH" == "true" ]]' in workflow
-    assert "args+=(--allow-output-growth)" in workflow
+    assert "allow_output_growth" not in workflow
+    assert "ALLOW_OUTPUT_GROWTH" not in workflow
+    assert "--allow-output-growth" not in workflow
     assert "cancel-in-progress: false" in workflow
 
 
@@ -55,6 +54,22 @@ def test_publishing_workflows_serialize_each_destination_repository():
     assert "group: getbible-v3-production-publication" in production
     assert "group: getbible-v3-test-publication" in test_build
     assert "group: getbible-v3-test-publication" in public_domain
+
+
+@pytest.mark.parametrize(
+    "workflow_path", NATIVE_BUILD_WORKFLOWS, ids=lambda path: path.name
+)
+def test_publishing_workflows_pin_the_reviewed_extractor(workflow_path):
+    workflow = workflow_path.read_text(encoding="utf-8")
+
+    assert "scripts/install_getbiblesword.py --version 0.1.1" in workflow
+
+
+def test_native_smoke_continues_to_follow_latest_extractor():
+    workflow = NATIVE_SMOKE_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "scripts/install_getbiblesword.py" in workflow
+    assert "scripts/install_getbiblesword.py --version" not in workflow
 
 
 def test_kjv_inspection_workflow_is_fresh_read_only_and_never_publishes():

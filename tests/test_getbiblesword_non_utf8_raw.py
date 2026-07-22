@@ -73,3 +73,60 @@ def test_verse_survives_when_no_osis_projection_is_utf8():
     assert "spans" not in verse
     assert "source" not in verse
     assert "titles" not in verse
+
+
+def test_verse_decodes_legacy_single_byte_text_without_rejecting_module():
+    record = verse_record(
+        raw=b"Ya si Se\xf1ot guiaguan g\xfciya.<CL>",
+        rendered=b"Ya si Se\xf1ot guiaguan g\xfciya.<CL>",
+    )
+    record["stripped"] = byte_value(b"Ya si Se\xf1ot guiaguan g\xfciya.\n")
+
+    verse = GetBibleSwordConverter._verse(
+        record,
+        "Psalms",
+        1,
+        2,
+        "gbf",
+    )
+
+    assert verse is not None
+    assert verse["text"] == "Ya si Se\u00f1ot guiaguan g\u00fciya.\n"
+    assert "tokens" not in verse
+    assert "spans" not in verse
+
+
+def test_verse_preserves_valid_utf8_around_legacy_single_bytes():
+    record = verse_record(raw=b"unused", rendered=b"unused")
+    record["stripped"] = byte_value(
+        "\u1f10\u03bd \u1f00\u03c1\u03c7\u1fc7 ".encode("utf-8") + b"Se\xf1ot"
+    )
+
+    verse = GetBibleSwordConverter._verse(
+        record,
+        "John",
+        1,
+        1,
+        "plain",
+    )
+
+    assert verse is not None
+    assert verse["text"] == "\u1f10\u03bd \u1f00\u03c1\u03c7\u1fc7 Se\u00f1ot"
+
+
+def test_verse_uses_cp1252_for_legacy_sword_punctuation():
+    record = verse_record(raw=b"unused", rendered=b"unused")
+    record["stripped"] = byte_value(b"\x93Se\xf1ot\x94 \x97 \x80")
+
+    verse = GetBibleSwordConverter._verse(
+        record,
+        "Psalms",
+        1,
+        2,
+        "gbf",
+    )
+
+    assert verse is not None
+    assert verse["text"] == "\u201cSe\u00f1ot\u201d \u2014 \u20ac"
+    assert "\ufffd" not in verse["text"]
+    assert not any(0x80 <= ord(character) <= 0x9F for character in verse["text"])

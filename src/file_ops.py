@@ -2,7 +2,7 @@
 File operations for getBible API builder.
 
 Handles:
-- Cleaning empty/invalid files from scripture output
+- Cleaning empty directories from scripture output
 - Copying public hash files from scripture repo to public API repo
 - Minified JSON serialization for the public API output
 
@@ -56,52 +56,48 @@ def write_json_minified(data, output_file):
         prefix=f'.{basename}.',
         suffix='.tmp',
     )
-    os.fchmod(descriptor, 0o644)
     try:
-        with os.fdopen(descriptor, 'w', encoding='utf-8', newline='\n') as stream:
-            writer = _CompleteTextWriter(stream)
-            json.dump(data, writer, ensure_ascii=False, separators=(',', ':'))
-            writer.write('\n')
-            stream.flush()
+        os.fchmod(descriptor, 0o644)
+        encoder = json.JSONEncoder(ensure_ascii=False, separators=(',', ':'))
+        for chunk in encoder.iterencode(data):
+            _write_all(descriptor, chunk.encode('utf-8'))
+        _write_all(descriptor, b'\n')
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
         os.replace(temporary, target)
-    except BaseException:
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
         try:
             os.unlink(temporary)
         except FileNotFoundError:
             pass
-        raise
 
 
-class _CompleteTextWriter:
-    """Adapt a text stream so every JSON encoder write completes in full.
+def _write_all(descriptor, payload):
+    """Write every byte, including across short low-level writes.
 
-    ``json.dump`` does not inspect the return value from the destination's
-    ``write`` method.  A short filesystem write can therefore leave syntactically
-    incomplete JSON without the encoder noticing.  Looping here closes that gap,
-    while the temporary-file replacement keeps the previous publication intact
-    if serialization raises for any other reason.
+    Working with encoded bytes and the file descriptor directly avoids buffered
+    text streams reporting that characters were accepted before all underlying
+    bytes reached the filesystem.
     """
 
-    def __init__(self, stream):
-        self._stream = stream
-
-    def write(self, value):
-        offset = 0
-        while offset < len(value):
-            written = self._stream.write(value[offset:])
-            if not isinstance(written, int) or written <= 0:
-                raise OSError('short write while serializing publication JSON')
-            offset += written
-        return len(value)
+    view = memoryview(payload)
+    offset = 0
+    while offset < len(view):
+        written = os.write(descriptor, view[offset:])
+        if not isinstance(written, int) or written <= 0:
+            raise OSError('short write while serializing publication JSON')
+        offset += written
 
 
-def clean_empty_files(scripture_path, min_size=500):
-    """
-    Remove empty/invalid JSON files and empty directories.
+def clean_empty_files(scripture_path, min_size=None):
+    """Remove empty directories without judging generated content by size.
 
     Args:
         scripture_path: Path to the scripture output directory
-        min_size: Minimum file size in bytes (files smaller are removed)
+        min_size: Deprecated and ignored. Retained for call compatibility.
 
     Returns:
         Tuple of (files_removed, dirs_removed)
@@ -112,17 +108,7 @@ def clean_empty_files(scripture_path, min_size=500):
     files_removed = 0
     dirs_removed = 0
 
-    # Remove small JSON files (likely empty/invalid)
-    for dirpath, dirnames, filenames in os.walk(scripture_path):
-        for filename in filenames:
-            if filename.endswith('.json'):
-                filepath = os.path.join(dirpath, filename)
-                if os.path.getsize(filepath) < min_size:
-                    os.remove(filepath)
-                    files_removed += 1
-                    log.debug('Removed small file: %s', filepath)
-
-    # Remove empty directories (bottom-up)
+    # Remove empty directories (bottom-up).
     for dirpath, dirnames, filenames in os.walk(scripture_path, topdown=False):
         if dirpath == scripture_path:
             continue
@@ -131,7 +117,7 @@ def clean_empty_files(scripture_path, min_size=500):
             dirs_removed += 1
             log.debug('Removed empty dir: %s', dirpath)
 
-    log.info('Cleaned %d files and %d directories', files_removed, dirs_removed)
+    log.info('Cleaned %d empty directories', dirs_removed)
     return files_removed, dirs_removed
 
 

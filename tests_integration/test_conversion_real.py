@@ -168,3 +168,14 @@ class TestVerseLevel:
         name = random_verse['name']
         assert ':' in name, f"Verse name missing colon: {name}"
         assert re.match(r'.+ \d+:\d+$', name), f"Invalid verse name format: {name}"
+
+
+def test_chamorro_legacy_text_is_published_as_unicode(converted_modules):
+    chamorro = converted_modules['chamorro']['version_data']
+    psalms = next(book for book in chamorro['books'] if book['nr'] == 19)
+    chapter = next(item for item in psalms['chapters'] if item['chapter'] == 1)
+    verse = next(item for item in chapter['verses'] if item['verse'] == 2)
+
+    assert 'minagof\u00f1a' in verse['text']
+    assert 'lay\u00f1a' in verse['text']
+    assert '\ufffd' not in verse['text']

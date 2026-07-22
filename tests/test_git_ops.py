@@ -150,27 +150,7 @@ class TestPushAll:
 
 
 class TestPublicationSafety:
-    def test_growth_baseline_survives_output_cleanup(self, tmp_path):
-        repo_path = tmp_path / 'repo'
-        _init_repo(repo_path)
-        generated = repo_path / 'kjv.json'
-        generated.write_bytes(b'x' * 100)
-        _git(['add', '.'], cwd=str(repo_path))
-        _git(['commit', '-m', 'baseline'], cwd=str(repo_path))
-
-        repo = GitRepository(str(repo_path), max_file_bytes=10_000)
-        repo.prepare()
-        assert not generated.exists()
-
-        generated.write_bytes(b'x' * 126)
-        with pytest.raises(PublicationSafetyError) as exc_info:
-            repo.validate_output()
-
-        message = str(exc_info.value)
-        assert str(generated) in message
-        assert 'previously 100 bytes' in message
-
-    def test_explicit_growth_override_is_scoped_to_growth(self, tmp_path):
+    def test_content_growth_below_hard_ceiling_is_allowed(self, tmp_path):
         repo_path = tmp_path / 'repo'
         _init_repo(repo_path)
         generated = repo_path / 'kjv.json'
@@ -178,10 +158,10 @@ class TestPublicationSafety:
         _git(['add', '.'], cwd=str(repo_path))
         _git(['commit', '-m', 'baseline'], cwd=str(repo_path))
 
-        repo = GitRepository(
-            str(repo_path), allow_output_growth=True, max_file_bytes=100,
-        )
+        repo = GitRepository(str(repo_path), max_file_bytes=100)
         repo.prepare()
+        assert not generated.exists()
+
         generated.write_bytes(b'x' * 99)
         repo.validate_output()
 
