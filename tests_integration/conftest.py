@@ -91,7 +91,9 @@ def converted_modules(
         contract = contracts / f"{sword_name}.ndjson"
         summary = reader.extract(sword_name, str(sword_root), str(contract))
         assert summary.module_name == sword_name
-        version_path = converter.convert(str(contract), module_name=sword_name)
+        version_path = converter.convert(
+            str(contract), module_name=sword_name, summary=summary
+        )
         with open(version_path, "r", encoding="utf-8") as stream:
             version_data = json.load(stream)
         results[abbreviation] = {

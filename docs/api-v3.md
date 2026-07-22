@@ -77,9 +77,8 @@ This prevents silent semantic loss while keeping the public API small.
 
 - Existing stable API fields are not removed or retyped.
 - Semantic fields are additive and deterministic.
+- Valid upstream content growth is accepted without comparison to an older build.
 - Files at or above 95 MiB fail before hashing or publication.
-- Tracked JSON growth above 25% fails unless a maintainer supplies the explicit
-  reviewed-growth override; the 95 MiB ceiling cannot be overridden.
 - Symlinks and special files in generated output fail validation.
 - Scripture output is validated and published before its derived hash repository.
 - A Git failure exits the workflow nonzero. Permanent remote rejections such as

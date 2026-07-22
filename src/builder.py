@@ -52,7 +52,6 @@ class BuildConfig:
     sword_root: str = ""
     getbiblesword: str = "getbiblesword"
     publication_policy: str = ""
-    allow_output_growth: bool = False
 
     @classmethod
     def from_args(cls, argv=None):
@@ -79,7 +78,6 @@ class BuildConfig:
             sword_root=args.sword_root,
             getbiblesword=args.getbiblesword,
             publication_policy=args.publication_policy,
-            allow_output_growth=args.allow_output_growth,
         )
 
 
@@ -93,12 +91,10 @@ class BuildPipeline:
         self._scripture_repo = GitRepository(
             self._scripture_path,
             config.repo_scripture,
-            allow_output_growth=config.allow_output_growth,
         )
         self._hash_repo = GitRepository(
             self._hash_path,
             config.repo_hash,
-            allow_output_growth=config.allow_output_growth,
         )
 
     def run(self):
@@ -109,7 +105,7 @@ class BuildPipeline:
                 self._download(module_names)
                 self._prepare_scripture_repo()
                 contracts = self._extract_contracts(module_names)
-                self._convert_contracts(contracts)
+                self._convert_contracts(contracts, total=len(module_names))
                 self._clean()
             finally:
                 self._cleanup_transient_inputs()
@@ -158,7 +154,6 @@ class BuildPipeline:
         materialize_sword_root(archives, self._config.sword_root)
 
         reader = GetBibleSwordReader(self._config.getbiblesword)
-        contracts = []
         for index, module_name in enumerate(module_names, 1):
             output = os.path.join(self._config.contracts_dir, f"{module_name}.ndjson")
             log.info("[%d/%d] Extracting %s", index, len(module_names), module_name)
@@ -170,19 +165,28 @@ class BuildPipeline:
                 summary.artifacts,
                 summary.stream_sha256,
             )
-            contracts.append((module_name, output))
-        return contracts
+            yield module_name, output, summary
 
-    def _convert_contracts(self, contracts):
+    def _convert_contracts(self, contracts, *, total):
         conversion_config = ConversionConfig.from_files(
             self._config.conf_dir, self._config.bible_conf
         )
         converter = GetBibleSwordConverter(
             conversion_config, self._scripture_path, conf_dir=self._config.conf_dir
         )
-        for index, (module_name, contract) in enumerate(contracts, 1):
-            log.info("[%d/%d] Rendering %s", index, len(contracts), module_name)
-            converter.convert(contract, module_name=module_name)
+        for index, (module_name, contract, summary) in enumerate(contracts, 1):
+            log.info("[%d/%d] Rendering %s", index, total, module_name)
+            try:
+                converter.convert(
+                    contract,
+                    module_name=module_name,
+                    summary=summary,
+                )
+            finally:
+                try:
+                    os.unlink(contract)
+                except FileNotFoundError:
+                    pass
         log.info("Native JSON build complete.")
 
     def _clean(self):
@@ -281,14 +285,6 @@ def _parse_raw_args(argv=None):
         default=os.path.join(default_conf, "PublicationPolicy.json"),
         help="default-deny module publication approval manifest",
     )
-    parser.add_argument(
-        "--allow-output-growth",
-        action="store_true",
-        help=(
-            "explicitly allow tracked JSON to grow by more than 25%% for a reviewed "
-            "schema change; the 95 MiB hard ceiling remains enforced"
-        ),
-    )
     parser.add_argument("--pull", action="store_true")
     parser.add_argument("--push", action="store_true")
     parser.add_argument("-d", "--no-download", dest="download", action="store_false", default=True)
@@ -341,7 +337,6 @@ def _apply_config_file(args):
         "getbible.pull": "pull",
         "getbible.push": "push",
         "getbible.hashonly": "hash_only",
-        "getbible.allow-output-growth": "allow_output_growth",
     }.items():
         if config_key in config:
             setattr(args, attribute, config[config_key] == "1")
@@ -365,7 +360,6 @@ def run_build(args):
         "download", "pull", "push", "hash_only", "test", "dry", "set_active",
         "github", "verbose", "contracts_dir", "sword_root", "getbiblesword",
         "publication_policy",
-        "allow_output_growth",
     ):
         if hasattr(args, name):
             setattr(config, name, getattr(args, name))
@@ -383,7 +377,7 @@ def main(argv=None):
         for name in (
             "api", "zip_dir", "bible_conf", "contracts_dir", "sword_root",
             "getbiblesword", "publication_policy", "download", "hash_only", "pull",
-            "push", "test", "repo_hash", "repo_scripture", "allow_output_growth",
+            "push", "test", "repo_hash", "repo_scripture",
         ):
             print(f"{name}: {getattr(args, name)}")
         return 0

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 import stat
@@ -14,7 +15,10 @@ from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 
-from getbiblesword_contract import ContractSummary, validate_contract
+from getbiblesword_contract import ContractError, ContractSummary, validate_contract
+
+
+log = logging.getLogger(__name__)
 
 
 class ModuleReader(Protocol):
@@ -31,9 +35,18 @@ class GetBibleSwordError(RuntimeError):
 class GetBibleSwordReader:
     """Run getBibleSWORD as an isolated subprocess and validate its output."""
 
-    def __init__(self, executable: str = "getbiblesword", *, timeout: int = 1800):
+    def __init__(
+        self,
+        executable: str = "getbiblesword",
+        *,
+        timeout: int = 1800,
+        validation_attempts: int = 3,
+    ):
+        if validation_attempts <= 0:
+            raise ValueError("validation_attempts must be positive")
         self.executable = executable
         self.timeout = timeout
+        self.validation_attempts = validation_attempts
 
     def _resolve_executable(self) -> str:
         if os.path.sep in self.executable:
@@ -58,60 +71,82 @@ class GetBibleSwordReader:
         destination = Path(output_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
 
-        file_descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{destination.name}.", suffix=".partial", dir=destination.parent
-        )
-        os.close(file_descriptor)
-        os.unlink(temporary_name)  # exporter refuses an existing output without --force
-        temporary = Path(temporary_name)
-        command = [
-            executable,
-            "extract",
-            "--sword-path", str(root),
-            "--module", module_name,
-            "--output", str(temporary),
-        ]
         environment = os.environ.copy()
         environment.setdefault("LC_ALL", "C.UTF-8")
-        try:
-            completed = subprocess.run(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-                timeout=self.timeout,
-                env=environment,
+        for attempt in range(1, self.validation_attempts + 1):
+            file_descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{destination.name}.",
+                suffix=".partial",
+                dir=destination.parent,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            temporary.unlink(missing_ok=True)
-            raise GetBibleSwordError(f"getBibleSWORD invocation failed for {module_name}") from exc
-        if completed.returncode != 0:
-            quarantine = destination.with_suffix(destination.suffix + ".failed")
-            if temporary.exists():
-                os.replace(temporary, quarantine)
-            detail = completed.stderr.strip()[-4000:]
-            raise GetBibleSwordError(
-                f"getBibleSWORD failed for {module_name} with exit code "
-                f"{completed.returncode}; contract quarantined at {quarantine}: {detail}"
-            )
-        if completed.stdout:
-            temporary.unlink(missing_ok=True)
-            raise GetBibleSwordError("getBibleSWORD wrote unexpected data to stdout")
-        try:
-            summary = validate_contract(
-                temporary,
-                expected_module=module_name,
-                expected_classification="bible",
-            )
-        except Exception:
-            quarantine = destination.with_suffix(destination.suffix + ".invalid")
-            if temporary.exists():
-                os.replace(temporary, quarantine)
-            raise
-        os.replace(temporary, destination)
-        return replace(summary, path=destination)
+            temporary = Path(temporary_name)
+            command = [
+                executable,
+                "extract",
+                "--sword-path", str(root),
+                "--module", module_name,
+            ]
+            try:
+                with os.fdopen(file_descriptor, "wb", buffering=0) as contract:
+                    completed = subprocess.run(
+                        command,
+                        stdin=subprocess.DEVNULL,
+                        stdout=contract,
+                        stderr=subprocess.PIPE,
+                        text=False,
+                        check=False,
+                        timeout=self.timeout,
+                        env=environment,
+                    )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                temporary.unlink(missing_ok=True)
+                raise GetBibleSwordError(
+                    f"getBibleSWORD invocation failed for {module_name}"
+                ) from exc
+            if completed.returncode != 0:
+                quarantine = destination.with_suffix(destination.suffix + ".failed")
+                if temporary.exists():
+                    os.replace(temporary, quarantine)
+                detail = completed.stderr.strip()[-4000:].decode(
+                    "utf-8", errors="replace"
+                )
+                raise GetBibleSwordError(
+                    f"getBibleSWORD failed for {module_name} with exit code "
+                    f"{completed.returncode}; contract quarantined at "
+                    f"{quarantine}: {detail}"
+                )
+            try:
+                summary = validate_contract(
+                    temporary,
+                    expected_module=module_name,
+                    expected_classification="bible",
+                )
+            except ContractError:
+                # v0.1.1 can occasionally exit zero after emitting a truncated
+                # stream on a busy runner. Retry only this independently proven
+                # transport failure; invocation and nonzero-exit failures remain
+                # immediate.
+                if attempt < self.validation_attempts:
+                    temporary.unlink(missing_ok=True)
+                    log.warning(
+                        "getBibleSWORD produced an invalid contract for %s on "
+                        "attempt %d/%d; retrying extraction",
+                        module_name,
+                        attempt,
+                        self.validation_attempts,
+                    )
+                    continue
+                quarantine = destination.with_suffix(destination.suffix + ".invalid")
+                if temporary.exists():
+                    os.replace(temporary, quarantine)
+                raise
+            except Exception:
+                temporary.unlink(missing_ok=True)
+                raise
+            os.replace(temporary, destination)
+            return replace(summary, path=destination)
+
+        raise AssertionError("unreachable extraction retry state")
 
 
 def _safe_zip_member(name: str) -> PurePosixPath:

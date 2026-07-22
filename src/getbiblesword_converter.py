@@ -11,7 +11,9 @@ from typing import Any
 from converter import ConversionConfig
 from file_ops import write_json_minified
 from getbiblesword_contract import (
+    ContractSummary,
     byte_value_text,
+    decode_byte_value,
     iter_contract,
     validate_contract,
 )
@@ -27,28 +29,56 @@ class ConversionError(ValueError):
 
 
 def _text(value: Any, location: str) -> str:
+    """Decode verified module text, accepting mixed legacy single-byte content."""
+
+    if value is None:
+        return ""
+    data = decode_byte_value(value, location=location)
+    decoded = data.decode("utf-8", errors="surrogateescape")
+    if not any(0xDC80 <= ord(character) <= 0xDCFF for character in decoded):
+        return decoded
+
+    result = []
+    for character in decoded:
+        codepoint = ord(character)
+        if not 0xDC80 <= codepoint <= 0xDCFF:
+            result.append(character)
+            continue
+        byte = bytes((codepoint - 0xDC00,))
+        try:
+            result.append(byte.decode("cp1252"))
+        except UnicodeDecodeError:
+            result.append(byte.decode("latin-1"))
+    return "".join(result)
+
+
+def _utf8_text(value: Any, location: str) -> str:
+    """Decode text only when it is safe to treat as Unicode semantic markup."""
+
     if value is None:
         return ""
     return byte_value_text(value, location=location)
 
 
 def _entry_text(record: dict[str, Any], markup: str) -> str:
-    """Decode SWORD's stripped view, with a safe OSIS fallback.
+    """Return display text without rejecting valid legacy module bytes.
 
-    Some official SWORD filters can return a malformed UTF-8 stripped
-    projection even when a UTF-8 module's authoritative raw OSIS is intact.
-    For the backward-compatible display field, derive visible text from valid
-    raw OSIS (or the valid rendered OSIS projection).  All projection envelopes
-    are discarded after conversion and are never emitted into the API.
+    UTF-8 is preferred.  When an OSIS module has only a malformed stripped
+    projection, valid raw or rendered OSIS remains the best source of visible
+    text.  Other historic SWORD modules can contain ISO-8859-1 bytes even when
+    their configuration claims UTF-8. Valid UTF-8 sequences are retained while
+    only undecodable bytes use the SWORD-compatible Windows-1252/Latin-1
+    fallback. This keeps the API text usable instead of aborting every other
+    translation in the build.
     """
 
     try:
-        return _text(record.get("stripped"), "entry.stripped")
-    except UnicodeDecodeError as stripped_error:
+        return _utf8_text(record.get("stripped"), "entry.stripped")
+    except UnicodeDecodeError:
         if markup.lower() == "osis":
             for projection in ("raw", "rendered_default"):
                 try:
-                    projected_text = _text(
+                    projected_text = _utf8_text(
                         record.get(projection), f"entry.{projection}"
                     )
                 except UnicodeDecodeError:
@@ -56,11 +86,7 @@ def _entry_text(record: dict[str, Any], markup: str) -> str:
                 plain_text = osis_plain_text(projected_text)
                 if plain_text is not None:
                     return plain_text
-        raise ConversionError(
-            "entry stripped projection is not valid UTF-8 and no safe "
-            f"{markup or 'unknown'} fallback is available at ordinal "
-            f"{record.get('ordinal')}"
-        ) from stripped_error
+        return _text(record.get("stripped"), "entry.stripped")
 
 
 def _osis_for_tokens(record: dict[str, Any], markup: str) -> str | None:
@@ -76,7 +102,7 @@ def _osis_for_tokens(record: dict[str, Any], markup: str) -> str | None:
         return None
     for projection in ("raw", "rendered_default"):
         try:
-            value = _text(record.get(projection), f"entry.{projection}")
+            value = _utf8_text(record.get(projection), f"entry.{projection}")
         except UnicodeDecodeError:
             continue
         if value:
@@ -109,12 +135,27 @@ class GetBibleSwordConverter:
         contract_path: str,
         *,
         module_name: str | None = None,
+        summary: ContractSummary | None = None,
     ) -> str:
-        summary = validate_contract(
-            contract_path,
-            expected_module=module_name,
-            expected_classification="bible",
-        )
+        if summary is None:
+            summary = validate_contract(
+                contract_path,
+                expected_module=module_name,
+                expected_classification="bible",
+            )
+        else:
+            if Path(summary.path).resolve() != Path(contract_path).resolve():
+                raise ConversionError("contract summary belongs to a different file")
+            if module_name is not None and summary.module_name != module_name:
+                raise ConversionError(
+                    f"contract contains module {summary.module_name!r}, "
+                    f"expected {module_name!r}"
+                )
+            if summary.classification != "bible":
+                raise ConversionError(
+                    f"module classification is {summary.classification!r}, "
+                    "expected 'bible'"
+                )
         if summary.unknown_record_types:
             unsupported = ", ".join(summary.unknown_record_types)
             raise ConversionError(
@@ -267,15 +308,8 @@ class GetBibleSwordConverter:
     ) -> None:
         """Decode only the config value needed by the API, then drop its record."""
 
-        try:
-            name = byte_value_text(
-                entry["name"], location="config_entry.name"
-            ).lower()
-            value = byte_value_text(
-                entry["value"], location="config_entry.value"
-            )
-        except UnicodeDecodeError:
-            return
+        name = _text(entry["name"], "config_entry.name").lower()
+        value = _text(entry["value"], "config_entry.value")
         values[name] = value
 
     def _consume_entry(

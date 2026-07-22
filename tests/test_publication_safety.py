@@ -1,4 +1,4 @@
-"""Tests for generated publication size and growth gates."""
+"""Tests for generated publication filesystem and hard-size gates."""
 
 import pytest
 
@@ -47,59 +47,23 @@ def test_reports_every_oversized_file_in_deterministic_order(tmp_path):
     assert "12 bytes" in message
 
 
-def test_rejects_tracked_json_growth_above_default_threshold(tmp_path):
+def test_allows_content_size_changes_below_hard_ceiling(tmp_path):
     output = tmp_path / "kjv.json"
-    output.write_bytes(b"x" * 126)
+    output.write_bytes(b"x" * 500)
 
-    with pytest.raises(PublicationSafetyError) as exc_info:
-        validate_generated_output(
-            str(tmp_path), baseline_json_sizes={"kjv.json": 100}
-        )
+    files = validate_generated_output(str(tmp_path), max_file_bytes=501)
 
-    message = str(exc_info.value)
-    assert str(output) in message
-    assert "126 bytes" in message
-    assert "previously 100 bytes" in message
-    assert "26.00% growth" in message
+    assert [(item.relative_path, item.size) for item in files] == [
+        ("kjv.json", 500)
+    ]
 
 
-def test_allows_growth_at_threshold_and_untracked_json(tmp_path):
-    tracked = tmp_path / "tracked.json"
-    added = tmp_path / "added.json"
-    tracked.write_bytes(b"x" * 125)
-    added.write_bytes(b"x" * 1_000)
-
-    validate_generated_output(
-        str(tmp_path), baseline_json_sizes={"tracked.json": 100}
-    )
-
-
-def test_explicit_growth_override_never_bypasses_hard_ceiling(tmp_path):
-    output = tmp_path / "kjv.json"
-    output.write_bytes(b"x" * 100)
-
-    validate_generated_output(
-        str(tmp_path),
-        baseline_json_sizes={"kjv.json": 1},
-        allow_growth=True,
-        max_file_bytes=101,
-    )
-
-    with pytest.raises(PublicationSafetyError):
-        validate_generated_output(
-            str(tmp_path),
-            baseline_json_sizes={"kjv.json": 1},
-            allow_growth=True,
-            max_file_bytes=100,
-        )
-
-
-def test_rejects_incomplete_atomic_json_writes_even_with_growth_override(tmp_path):
+def test_rejects_incomplete_atomic_json_writes(tmp_path):
     temporary = tmp_path / '.kjv.json.interrupted.tmp'
     temporary.write_text('{"books":', encoding='utf-8')
 
     with pytest.raises(PublicationSafetyError) as exc_info:
-        validate_generated_output(str(tmp_path), allow_growth=True)
+        validate_generated_output(str(tmp_path))
 
     message = str(exc_info.value)
     assert str(temporary) in message

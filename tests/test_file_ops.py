@@ -2,30 +2,30 @@
 
 import json
 import os
+import shutil
 import pytest
 
 from file_ops import (
-    _CompleteTextWriter,
+    _write_all,
     clean_empty_files,
     move_public_hash_files,
     write_json_minified,
 )
 
 
-def test_complete_text_writer_retries_short_writes():
-    class ShortStream:
-        def __init__(self):
-            self.value = ''
+def test_write_all_retries_short_writes(monkeypatch):
+    written = bytearray()
 
-        def write(self, value):
-            accepted = value[:3]
-            self.value += accepted
-            return len(accepted)
+    def short_write(_descriptor, value):
+        accepted = value[:3]
+        written.extend(accepted)
+        return len(accepted)
 
-    stream = ShortStream()
+    monkeypatch.setattr('file_ops.os.write', short_write)
 
-    assert _CompleteTextWriter(stream).write('complete output') == 15
-    assert stream.value == 'complete output'
+    _write_all(99, b'complete output')
+
+    assert bytes(written) == b'complete output'
 
 
 def test_minified_json_write_is_atomic_on_serialization_failure(tmp_path):
@@ -43,6 +43,22 @@ def test_minified_json_write_is_atomic_on_serialization_failure(tmp_path):
     assert list(tmp_path.glob('.publication.json.*.tmp')) == []
 
 
+def test_minified_json_write_preserves_target_on_low_level_write_failure(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / 'publication.json'
+    original = b'{"stable":true}\n'
+    target.write_bytes(original)
+
+    monkeypatch.setattr('file_ops.os.write', lambda _descriptor, _value: 0)
+
+    with pytest.raises(OSError, match='short write'):
+        write_json_minified({'replacement': True}, target)
+
+    assert target.read_bytes() == original
+    assert list(tmp_path.glob('.publication.json.*.tmp')) == []
+
+
 def test_minified_json_write_replaces_target_with_complete_utf8(tmp_path):
     target = tmp_path / 'publication.json'
     target.write_text('{"old":true}\n', encoding='utf-8')
@@ -57,10 +73,28 @@ def test_minified_json_write_replaces_target_with_complete_utf8(tmp_path):
     assert list(tmp_path.glob('.publication.json.*.tmp')) == []
 
 
+def test_minified_json_write_removes_temp_when_replace_leaves_source(
+    tmp_path, monkeypatch
+):
+    """Defend against filesystems that copy instead of consuming the temp."""
+
+    target = tmp_path / 'publication.json'
+
+    def copy_instead_of_replace(source, destination):
+        shutil.copyfile(source, destination)
+
+    monkeypatch.setattr('file_ops.os.replace', copy_instead_of_replace)
+
+    write_json_minified({'complete': True}, target)
+
+    assert json.loads(target.read_text(encoding='utf-8')) == {'complete': True}
+    assert list(tmp_path.glob('.publication.json.*.tmp')) == []
+
+
 @pytest.fixture
 def scripture_with_empties(tmp_path):
-    """Create a scripture dir with some valid and some empty/small files."""
-    # Valid files (>500 bytes)
+    """Create a scripture dir with valid files and empty directories."""
+    # Larger generated files
     big_data = {'text': 'x' * 600}
     (tmp_path / 'kjv').mkdir()
     (tmp_path / 'kjv' / '1').mkdir()
@@ -71,10 +105,10 @@ def scripture_with_empties(tmp_path):
     with open(tmp_path / 'kjv' / '1' / '1.json', 'w') as f:
         json.dump(big_data, f)
 
-    # Small file (<500 bytes) — should be cleaned
+    # Small JSON documents are valid output and must be preserved.
     (tmp_path / 'kjv' / '1' / '2.json').write_text('{}')
 
-    # Empty directory with only a small file
+    # Directory containing a small document is not empty.
     (tmp_path / 'kjv' / '2').mkdir()
     (tmp_path / 'kjv' / '2' / '1.json').write_text('{}')
 
@@ -120,10 +154,11 @@ def hashed_scripture(tmp_path):
 
 
 class TestCleanEmptyFiles:
-    def test_removes_small_json(self, scripture_with_empties):
+    def test_preserves_small_json(self, scripture_with_empties):
         f_rm, _ = clean_empty_files(str(scripture_with_empties))
-        assert f_rm >= 2  # 2.json and kjv/2/1.json
-        assert not (scripture_with_empties / 'kjv' / '1' / '2.json').exists()
+        assert f_rm == 0
+        assert (scripture_with_empties / 'kjv' / '1' / '2.json').exists()
+        assert (scripture_with_empties / 'kjv' / '2' / '1.json').exists()
 
     def test_removes_empty_dirs(self, scripture_with_empties):
         clean_empty_files(str(scripture_with_empties))
@@ -141,8 +176,8 @@ class TestCleanEmptyFiles:
 
     def test_returns_counts(self, scripture_with_empties):
         f_rm, d_rm = clean_empty_files(str(scripture_with_empties))
-        assert f_rm >= 2
-        assert d_rm >= 1  # at least empty_dir
+        assert f_rm == 0
+        assert d_rm == 1
 
 
 class TestMovePublicHashFiles:

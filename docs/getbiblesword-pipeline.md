@@ -13,8 +13,9 @@ explicit and both projects can release and test independently.
    extraction cache is used.
 4. ZIPs are installed into a fresh explicit SWORD root. Absolute paths, traversal,
    links, oversized archives, and conflicting files are rejected.
-5. The latest stable GetBibleSWORD release extracts each module to a transient
-   NDJSON contract.
+5. The reviewed, pinned GetBibleSWORD release extracts each publication module to
+   a transient NDJSON contract. The independent daily smoke workflow follows the
+   latest stable release to expose compatibility changes before promotion.
 6. Builder independently validates the complete v1 stream: zero-based sequence,
    LF framing, byte envelopes, artifact groups, counts, diagnostics, successful
    footer, and exact stream SHA-256.
@@ -23,8 +24,9 @@ explicit and both projects can release and test independently.
    headings, and introduction semantics—not extraction envelopes.
 8. The module ZIPs, SWORD root, and contracts are discarded after the build
    attempt, including a failed conversion.
-9. Generated Scripture files pass hard-size, historical-growth, and filesystem
-   safety gates before hashing.
+9. Generated Scripture files pass hard-size and filesystem safety gates before
+   hashing. Content growth is accepted as upstream data rather than treated as a
+   corruption signal.
 10. Scripture publication completes before the derived hash repository is
     attempted. Any Git error fails the workflow; permanent remote rejections are
     not retried.
@@ -32,13 +34,6 @@ explicit and both projects can release and test independently.
 The build therefore fails closed. It does not publish a partial catalog when a
 module is missing, extraction or validation fails, an unmapped record appears, a
 generated file is unsafe or too large, or publication fails.
-
-When a reviewed API enrichment intentionally grows tracked JSON by more than
-25%, manually dispatch the publishing workflow with `allow_output_growth`
-enabled. The override applies only to that run and never bypasses the 95 MiB
-hard file ceiling. After the enlarged files are published, their committed sizes
-become the baseline and subsequent scheduled or manual builds run with the
-growth gate enabled normally.
 
 Publishing workflows are serialized per destination repository. JSON files are
 written through same-directory temporary files and atomically replaced; an
@@ -60,6 +55,12 @@ complete token/span model. It additionally projects supported OSIS structure:
   and other typed titles supplied by the module;
 - normalized `introduction` prose at its natural structural level.
 
+Display text is content-tolerant. Builder preserves valid UTF-8 sequences and
+maps isolated historic Windows-1252/Latin-1 bytes into Unicode even when a module
+incorrectly declares UTF-8. Optional OSIS token and structural enrichment is used
+only from a valid UTF-8 projection; unusable optional markup does not reject a
+verse whose stripped display text is available.
+
 Raw bytes, rendered/stripped projections, base64 values, annotation segments,
 module files, exact configuration-source records, `source`, and `source_contract`
 are never copied into the API. Unknown v1 record types fail until an explicit,
@@ -74,9 +75,9 @@ checksum and GitHub asset digest, rejects unsafe tar members, and installs only
 `.tools/getbiblesword-release.json`.
 
 `--version X.Y.Z` remains available for deterministic reproduction or incident
-investigation. Production and scheduled conformance workflows use the default
-latest-stable policy so a newly published extractor release is tested without
-waiting for a Builder commit.
+investigation. Publication workflows use the reviewed pin; the scheduled native
+smoke workflow uses the default latest-stable policy so a newly published
+extractor release is tested without changing production behavior.
 
 ## Working directories
 
@@ -91,7 +92,7 @@ each build attempt and workflows neither cache nor upload them.
 
 ## Inspectable workflows
 
-`.github/workflows/preview-build.yml` builds the six-module test catalog with the
+`.github/workflows/preview-build.yml` builds the representative test catalog with the
 latest stable binary and uploads only the generated API preview. It never pushes
 to public repositories.
 

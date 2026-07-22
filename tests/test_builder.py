@@ -90,15 +90,6 @@ class TestParseArgs:
         args = parse_args(['--dry'])
         assert args.dry is True
 
-    def test_explicit_output_growth_override(self):
-        args = parse_args(['--allow-output-growth'])
-        assert args.allow_output_growth is True
-
-    def test_output_growth_override_defaults_off(self):
-        args = parse_args([])
-        assert args.allow_output_growth is False
-
-
 class TestConfigFile:
     def test_loads_config(self, tmp_path):
         config = tmp_path / '.config'
@@ -128,15 +119,6 @@ class TestConfigFile:
         )
         args = parse_args(['--conf', str(config)])
         assert args.api == '/custom/api'
-
-    def test_config_can_explicitly_allow_output_growth(self, tmp_path):
-        config = tmp_path / '.config'
-        config.write_text('getbible.allow-output-growth=1\n')
-
-        args = parse_args(['--conf', str(config)])
-
-        assert args.allow_output_growth is True
-
 
 class TestBuildPublicationSafety:
     def test_file_gate_runs_before_hashing(self, tmp_path, monkeypatch):
