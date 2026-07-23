@@ -19,9 +19,9 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Install reviewed GetBibleSWORD release
+      - name: Install policy-selected GetBibleSWORD release
         run: |
-          python3 scripts/install_getbiblesword.py --version 0.1.1
+          python3 scripts/install_getbiblesword.py
           .tools/getbiblesword version
           python3 -m json.tool .tools/getbiblesword-release.json
       - name: Setup gitHub User Details

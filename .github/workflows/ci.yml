@@ -53,7 +53,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
-      - name: Install latest stable GetBibleSWORD release
+      - name: Install policy-selected GetBibleSWORD release
         run: |
           python scripts/install_getbiblesword.py
           echo "$PWD/.tools" >> "$GITHUB_PATH"

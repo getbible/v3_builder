@@ -46,6 +46,11 @@ TARGET_BOOKS = (
 )
 TARGET_CHAPTERS = tuple(range(1, 6))
 FORBIDDEN_SOURCE_FIELDS = frozenset({"source", "source_contract"})
+EDITORIAL_HEADING_FIELDS = frozenset(
+    {"order", "type", "anchor", "text", "heading_type", "canonical"}
+)
+EDITORIAL_PARAGRAPH_FIELDS = frozenset({"order", "type", "start", "end"})
+EDITORIAL_ANCHOR_FIELDS = frozenset({"verse", "edge"})
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -277,6 +282,131 @@ def _semantic_summary(
     return result
 
 
+def _validate_editorial(
+    path: Path,
+    chapter: dict[str, Any],
+    verse_numbers: Sequence[int],
+) -> dict[str, Any]:
+    """Validate and summarize the optional chapter-level editorial contract."""
+
+    editorial = chapter.get("editorial")
+    if editorial is None:
+        return {
+            "entry_count": 0,
+            "heading_count": 0,
+            "paragraph_count": 0,
+            "entries": [],
+        }
+    if not isinstance(editorial, list) or not editorial:
+        raise InspectionError(f"{path} editorial must be a non-empty array")
+
+    verse_positions = {
+        verse_number: position
+        for position, verse_number in enumerate(verse_numbers)
+    }
+    heading_count = 0
+    paragraph_ranges: list[tuple[int, int]] = []
+    reading_positions: list[tuple[int, int]] = []
+    for expected_order, entry in enumerate(editorial):
+        location = f"{path} editorial[{expected_order}]"
+        if not isinstance(entry, dict):
+            raise InspectionError(f"{location} must be an object")
+        if type(entry.get("order")) is not int or entry["order"] != expected_order:
+            raise InspectionError(
+                f"{location} order must be the contiguous integer {expected_order}"
+            )
+
+        entry_type = entry.get("type")
+        if entry_type == "heading":
+            if set(entry) != EDITORIAL_HEADING_FIELDS:
+                raise InspectionError(
+                    f"{location} heading fields must be exactly "
+                    f"{sorted(EDITORIAL_HEADING_FIELDS)}"
+                )
+            anchor = entry["anchor"]
+            if not isinstance(anchor, dict) or set(anchor) != EDITORIAL_ANCHOR_FIELDS:
+                raise InspectionError(
+                    f"{location} anchor fields must be exactly "
+                    f"{sorted(EDITORIAL_ANCHOR_FIELDS)}"
+                )
+            anchor_verse = anchor["verse"]
+            if type(anchor_verse) is not int or anchor_verse not in verse_positions:
+                raise InspectionError(
+                    f"{location} anchor verse must reference an emitted verse"
+                )
+            if anchor["edge"] != "before":
+                raise InspectionError(f"{location} anchor edge must be 'before'")
+            if not isinstance(entry["text"], str) or not entry["text"].strip():
+                raise InspectionError(f"{location} text must be non-empty")
+            if (
+                not isinstance(entry["heading_type"], str)
+                or not entry["heading_type"].strip()
+            ):
+                raise InspectionError(
+                    f"{location} heading_type must be a non-empty string"
+                )
+            if type(entry["canonical"]) is not bool:
+                raise InspectionError(f"{location} canonical must be boolean")
+            heading_count += 1
+            reading_positions.append((verse_positions[anchor_verse], 0))
+            continue
+
+        if entry_type == "paragraph":
+            if set(entry) != EDITORIAL_PARAGRAPH_FIELDS:
+                raise InspectionError(
+                    f"{location} paragraph fields must be exactly "
+                    f"{sorted(EDITORIAL_PARAGRAPH_FIELDS)}"
+                )
+            start = entry["start"]
+            end = entry["end"]
+            if type(start) is not int or start not in verse_positions:
+                raise InspectionError(
+                    f"{location} start must reference an emitted verse"
+                )
+            if type(end) is not int or end not in verse_positions:
+                raise InspectionError(
+                    f"{location} end must reference an emitted verse"
+                )
+            if verse_positions[end] < verse_positions[start]:
+                raise InspectionError(f"{location} end precedes start")
+            paragraph_ranges.append((start, end))
+            reading_positions.append((verse_positions[start], 1))
+            continue
+
+        raise InspectionError(
+            f"{location} type must be 'heading' or 'paragraph'"
+        )
+
+    if reading_positions != sorted(reading_positions):
+        raise InspectionError(
+            f"{path} editorial entries are not in chapter reading order"
+        )
+
+    if paragraph_ranges:
+        expected_start_position = 0
+        for start, end in paragraph_ranges:
+            start_position = verse_positions[start]
+            end_position = verse_positions[end]
+            if start_position != expected_start_position:
+                raise InspectionError(
+                    f"{path} editorial paragraph ranges do not completely "
+                    "and contiguously cover the emitted verses"
+                )
+            expected_start_position = end_position + 1
+        if expected_start_position != len(verse_numbers):
+            raise InspectionError(
+                f"{path} editorial paragraph ranges do not end at the "
+                "chapter's final emitted verse"
+            )
+
+    return {
+        "entry_count": len(editorial),
+        "heading_count": heading_count,
+        "paragraph_count": len(paragraph_ranges),
+        "entries": editorial,
+    }
+
+
 def _chapter_summary(
     path: Path,
     chapter_data: dict[str, Any],
@@ -312,6 +442,15 @@ def _chapter_summary(
     verses_with_tokens = 0
     verses_with_spans_field = 0
     for verse in verses:
+        text = verse.get("text")
+        if not isinstance(text, str) or not text:
+            raise InspectionError(
+                f"{path} verse {verse['verse']} has no non-empty text"
+            )
+        if text.startswith(("\n", "\r")):
+            raise InspectionError(
+                f"{path} verse {verse['verse']} text begins with a line ending"
+            )
         tokens = verse.get("tokens")
         spans = verse.get("spans")
         if tokens is not None:
@@ -341,6 +480,7 @@ def _chapter_summary(
         raise InspectionError(f"{path} exposes no KJV token data")
 
     span_tags = Counter(str(span.get("tag", "<missing>")) for span in span_records)
+    editorial_summary = _validate_editorial(path, chapter_data, verse_numbers)
     paragraph_markers = _semantic_summary(chapter_data, verses, "paragraph")
     heading_markers = _semantic_summary(chapter_data, verses, "heading")
     summary = {
@@ -365,6 +505,7 @@ def _chapter_summary(
             "tags": dict(sorted(span_tags.items())),
             "span_field_profiles": _field_profiles(span_records),
         },
+        "editorial": editorial_summary,
         "paragraph_boundaries": paragraph_markers,
         "headings_or_titles": heading_markers,
     }
@@ -498,8 +639,9 @@ def _print_inspection(result: dict[str, Any]) -> None:
     print("\nINSPECTION PASSED")
     print(
         "All requested books and chapters are present, no source envelopes remain, "
-        "KJV token/span fields are structurally valid, and every generated API file "
-        "is below the size ceiling."
+        "verse text has no leading line endings, KJV token/span and editorial "
+        "fields are structurally valid, and every generated API file is below "
+        "the size ceiling."
     )
 
 

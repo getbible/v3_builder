@@ -13,6 +13,9 @@ KJV_INSPECTION_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/inspect-kjv-api.y
 KJV_INSPECTION_MAP = REPOSITORY_ROOT / "conf/CrosswireModulesMapKJVInspection.json"
 PREVIEW_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/preview-build.yml"
 NATIVE_SMOKE_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/native-smoke.yml"
+GETBIBLESWORD_RELEASE_POLICY = (
+    REPOSITORY_ROOT / "conf/GetBibleSwordRelease.json"
+)
 
 
 @pytest.mark.parametrize(
@@ -59,10 +62,37 @@ def test_publishing_workflows_serialize_each_destination_repository():
 @pytest.mark.parametrize(
     "workflow_path", NATIVE_BUILD_WORKFLOWS, ids=lambda path: path.name
 )
-def test_publishing_workflows_pin_the_reviewed_extractor(workflow_path):
+def test_publishing_workflows_use_central_release_policy(workflow_path):
     workflow = workflow_path.read_text(encoding="utf-8")
 
-    assert "scripts/install_getbiblesword.py --version 0.1.1" in workflow
+    assert "scripts/install_getbiblesword.py" in workflow
+    assert "scripts/install_getbiblesword.py --version" not in workflow
+    assert "scripts/install_getbiblesword.py --repository" not in workflow
+
+
+def test_checked_in_release_policy_follows_latest_stable_getbiblesword():
+    import json
+
+    assert json.loads(GETBIBLESWORD_RELEASE_POLICY.read_text(encoding="utf-8")) == {
+        "schema": "getbiblesword-release-policy/v1",
+        "repository": "getbible/getbiblesword",
+        "version": "latest",
+    }
+
+
+def test_every_installer_workflow_uses_the_central_policy_without_overrides():
+    workflows = sorted((REPOSITORY_ROOT / ".github/workflows").glob("*.yml"))
+    installer_workflows = [
+        path
+        for path in workflows
+        if "scripts/install_getbiblesword.py" in path.read_text(encoding="utf-8")
+    ]
+
+    assert installer_workflows
+    for path in installer_workflows:
+        workflow = path.read_text(encoding="utf-8")
+        assert "scripts/install_getbiblesword.py --version" not in workflow, path
+        assert "scripts/install_getbiblesword.py --repository" not in workflow, path
 
 
 def test_native_smoke_continues_to_follow_latest_extractor():
@@ -70,6 +100,7 @@ def test_native_smoke_continues_to_follow_latest_extractor():
 
     assert "scripts/install_getbiblesword.py" in workflow
     assert "scripts/install_getbiblesword.py --version" not in workflow
+    assert "conf/GetBibleSwordRelease.json" in workflow
 
 
 def test_kjv_inspection_workflow_is_fresh_read_only_and_never_publishes():

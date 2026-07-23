@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/native-smoke.yml"
       - "scripts/install_getbiblesword.py"
+      - "conf/GetBibleSwordRelease.json"
       - "src/**"
       - "tests_integration/**"
       - "conf/CrosswireModulesMapTest.json"
@@ -41,7 +42,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Install public GetBibleSWORD release
+      - name: Install policy-selected GetBibleSWORD release
         run: |
           python scripts/install_getbiblesword.py
           .tools/getbiblesword version

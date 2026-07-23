@@ -53,6 +53,31 @@ def _responses(monkeypatch, release, archive, archive_name, digest):
     monkeypatch.setattr(installer, "_architecture", lambda: "x86_64")
 
 
+def test_checked_in_release_policy_is_the_central_latest_stable_authority():
+    policy = installer.load_release_policy(installer.DEFAULT_POLICY)
+
+    assert policy.repository == "getbible/getbiblesword"
+    assert policy.version == "latest"
+
+
+def test_release_policy_rejects_unreviewed_fields(tmp_path):
+    policy = tmp_path / "release.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "schema": installer.POLICY_SCHEMA,
+                "repository": "getbible/getbiblesword",
+                "version": "latest",
+                "unexpected": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(installer.InstallError, match="fields must be exactly"):
+        installer.load_release_policy(policy)
+
+
 def test_latest_stable_release_is_resolved_verified_and_recorded(tmp_path, monkeypatch):
     archive = _archive()
     release, archive_name, digest = _release(archive)

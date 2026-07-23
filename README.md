@@ -18,7 +18,7 @@ official SWORD engine through the separately released
 - Verifies raw entries, SWORD projections, attributes, configuration sources, and
   artifacts as transport data before conversion.
 - Keeps the existing API shape and complete token/span fields while deriving compact
-  paragraph, title, and introduction semantics.
+  chapter editorial, paragraph, title, and introduction semantics.
 - Treats display text as multilingual content: valid UTF-8 is preserved and isolated
   legacy Windows-1252/Latin-1 bytes are converted instead of rejecting the catalog.
 - Treats module ZIPs, the SWORD installation, and lossless contracts as transient
@@ -27,10 +27,10 @@ official SWORD engine through the separately released
 - Keeps C++ extraction and Python API generation as independently releasable and
   testable projects.
 
-The daily integration follows the latest stable GetBibleSWORD release, while
-publishing workflows pin the reviewed compatible release. Every build records the
-exact resolved version and checksum. The integration remains under review until
-the conformance and comparison gates in
+Every workflow reads `conf/GetBibleSwordRelease.json`. Its `version: "latest"`
+policy resolves the latest stable GetBibleSWORD release once per build, then
+records the exact immutable version, release, asset, and checksum used. The
+integration remains under review until the conformance and comparison gates in
 [`docs/getbiblesword-pipeline.md`](docs/getbiblesword-pipeline.md) pass.
 
 ## Pipeline
@@ -54,7 +54,7 @@ otherwise addressable verse.
 
 - Python 3.12+
 - Linux x86-64 or ARM64 for the published GetBibleSWORD release
-- Reviewed GetBibleSWORD release for publication; latest stable for smoke testing
+- Latest stable GetBibleSWORD release selected by the checked-in release policy
 - `requests` for legacy configuration helpers
 - `pytest` for tests
 
@@ -79,10 +79,11 @@ python scripts/install_getbiblesword.py
 export GETBIBLESWORD_BIN="$PWD/.tools/getbiblesword"
 ```
 
-The installer follows the latest stable release by default, verifies both the
-release checksum file and GitHub asset digest, and writes the resolved provenance
-to `.tools/getbiblesword-release.json`. Reproduction and incident investigation
-can request an exact release with `--version 0.1.1`.
+The installer reads `conf/GetBibleSwordRelease.json`, verifies both the release
+checksum file and GitHub asset digest, and writes the resolved provenance to
+`.tools/getbiblesword-release.json`. The policy currently follows the latest
+stable release, which resolves to `0.2.0` at the time of this change. Reproduction
+and incident investigation can override it explicitly with `--version 0.2.0`.
 
 Run the representative-module validation build or the full catalog:
 
@@ -124,11 +125,22 @@ Translation, book, chapter, and verse fields used by current clients are retaine
 The converter derives complete `tokens` and `spans` from OSIS word markup and
 promotes supported structural markup into compact API fields:
 
+- `editorial` is the ordered chapter-level reading-layout contract. Headings
+  identify a verse and the `before` edge; paragraphs use only inclusive integer
+  `start` and `end` verse numbers;
 - `paragraph: true` marks a verse that begins a new paragraph;
 - `titles` contains typed visible headings such as chapter titles and Psalm
   superscriptions, including title token/span data when available;
 - module, testament, book, and chapter introduction text remains attached at its
   natural structural level.
+
+`editorial` is emitted identically in the nested chapter objects of translation
+and book documents and in the standalone chapter document. Existing `paragraph`
+and `titles` fields remain available for v3 clients; the chapter projection gives
+new clients one small ordered structure without word coordinates or
+cross-chapter continuation flags. See
+[`docs/api-v3.md`](docs/api-v3.md#chapter-editorial-semantics) for its exact
+schema and derivation rules.
 
 Raw, rendered, stripped, configuration, annotation-segment, and filesystem byte
 envelopes are never copied into the published API. They are validated and used only
@@ -140,7 +152,9 @@ Text envelopes are decoded independently from transport validation. Valid UTF-8
 sequences remain unchanged. If a historic module contains isolated single-byte text
 despite declaring UTF-8, undecodable bytes use the SWORD-compatible Windows-1252
 mapping with a total Latin-1 fallback. OSIS tokens and structure remain best-effort
-enrichment and are omitted when their source markup is not safe to parse.
+enrichment and are omitted when their source markup is not safe to parse. Repeated
+leading `LF`, `CR`, or `CRLF` characters supplied as paragraph formatting are
+removed from every verse `text` value; line endings inside the verse are preserved.
 
 ## Publication authorization
 
@@ -168,21 +182,23 @@ download a representative catalog that includes legacy GBF/Windows-1252 content.
 The `Native GetBibleSWORD Smoke Test` workflow performs this real binary-backed
 integration on master, on a daily schedule, and by manual dispatch. The schedule
 is deliberate: a newly published GetBibleSWORD release is tested even when Builder
-has not changed.
+has not changed. Publication and preview workflows consume that same central
+latest-stable policy.
 
 The `Test Build` workflow builds the representative real modules and uploads only the generated
 static API preview. Lossless contracts are not uploaded or cached. The manual
 `Inspect fresh KJV API output` workflow performs a fresh KJV-only build and prints
-bounded structure reports plus representative records for Psalms, John, and
-Revelation chapters 1–5 directly in the job log.
+bounded structure reports, validates the exact chapter `editorial` contract, and
+prints representative records for Psalms, John, and Revelation chapters 1–5
+directly in the job log.
 
 ## Security and release notes
 
 - The exporter receives no shell command and no stdin.
 - Module names are passed as individual subprocess arguments.
 - Module ZIPs and release tarballs are extracted with path/link checks.
-- The latest stable release is resolved once per job; its exact asset is then
-  checksum-verified and recorded before execution.
+- The central release policy is resolved once per job; its exact stable version
+  and asset are checksum-verified and recorded before execution.
 - Artifact symlinks are validated as metadata but never created by Builder.
 - Unknown contract major versions and unmapped v1 records are rejected.
 - Generated files at or above 95 MiB are rejected before hashing or publication.

@@ -11,6 +11,8 @@ Non-negotiable invariants:
   conversion until an explicit semantic mapping exists.
 - Never replace raw entry bytes with rendered or stripped projections.
 - Keep publication default-deny; a module map edit is not publication approval.
+- Keep `conf/GetBibleSwordRelease.json` as the single default release authority;
+  never duplicate a getBibleSWORD version in a workflow.
 - Do not create symlinks while installing ZIPs or reassembling artifacts.
 - Preserve existing API fields unless a separately reviewed API version changes;
   never publish lossless byte envelopes in the static API.
