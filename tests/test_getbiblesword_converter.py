@@ -93,9 +93,10 @@ def write_contract(path):
         ),
         entry(
             2, 1, 1, "verse",
+            '<title canonical="true" type="section">The Creation</title>'
             '<milestone marker="¶" type="x-p"/>'
             '<w lemma="strong:H07225">In the beginning</w>',
-            "In the beginning",
+            "\r\n\nIn the beginning",
         ),
     ]
     write_records(path, records)
@@ -113,7 +114,7 @@ def write_records(path, records):
         counts[record["type"]] = counts.get(record["type"], 0) + 1
     footer = {
         "sequence": len(records), "type": "footer", "counts": counts,
-        "entries": 3, "artifacts": 0, "artifact_bytes": 0,
+        "entries": counts.get("entry", 0), "artifacts": 0, "artifact_bytes": 0,
         "success": True, "stream_sha256": hashlib.sha256(payload).hexdigest(),
     }
     path.write_bytes(payload + json.dumps(footer, sort_keys=True, separators=(",", ":")).encode() + b"\n")
@@ -160,6 +161,37 @@ def test_native_converter_emits_lean_semantic_api_shape(tmp_path):
     assert document["books"][0]["chapters"][0]["titles"] == [
         {"type": "chapter", "text": "Creation"}
     ]
+    assert verse["titles"] == [
+        {
+            "type": "section",
+            "text": "The Creation",
+            "canonical": True,
+        }
+    ]
+    assert document["books"][0]["chapters"][0]["editorial"] == [
+        {
+            "order": 0,
+            "type": "heading",
+            "anchor": {"verse": 1, "edge": "before"},
+            "text": "Creation",
+            "heading_type": "chapter",
+            "canonical": False,
+        },
+        {
+            "order": 1,
+            "type": "heading",
+            "anchor": {"verse": 1, "edge": "before"},
+            "text": "The Creation",
+            "heading_type": "section",
+            "canonical": True,
+        },
+        {
+            "order": 2,
+            "type": "paragraph",
+            "start": 1,
+            "end": 1,
+        },
+    ]
     assert document["distribution_license"] == "Public Domain"
     assert_no_lossless_envelopes(document)
 
@@ -170,9 +202,161 @@ def test_native_converter_emits_lean_semantic_api_shape(tmp_path):
         (output / "kjv" / "1.json").read_text(encoding="utf-8")
     )
     assert chapter_document["titles"][0]["text"] == "Creation"
+    assert chapter_document["editorial"] == (
+        document["books"][0]["chapters"][0]["editorial"]
+    )
+    assert book_document["chapters"][0]["editorial"] == chapter_document["editorial"]
     assert book_document["titles"][0]["text"] == "Genesis"
     assert_no_lossless_envelopes(chapter_document)
     assert_no_lossless_envelopes(book_document)
+
+
+def test_editorial_orders_headings_and_closes_complete_paragraph_ranges(tmp_path):
+    contract = tmp_path / "KJV.ndjson"
+    output = tmp_path / "output"
+    write_contract(contract)
+    records = [
+        record
+        for record in (
+            json.loads(line) for line in contract.read_text().splitlines()
+        )
+        if record["type"] not in {"entry", "footer"}
+    ]
+    records.extend(
+        [
+            entry(
+                0, 0, 0, "book",
+                '<title type="main">Genesis</title>', "Genesis",
+            ),
+            entry(
+                1, 1, 0, "chapter",
+                '<title type="chapter">CHAPTER 1.</title>', "CHAPTER 1.",
+            ),
+            entry(
+                2, 1, 1, "verse",
+                '<w lemma="strong:H1">One</w>', "One",
+            ),
+            entry(
+                3, 1, 2, "verse",
+                '<title type="section">A new section</title>'
+                '<milestone marker="¶" type="x-p"/>'
+                '<w lemma="strong:H2">Two</w>',
+                "Two",
+            ),
+            entry(
+                4, 1, 3, "verse",
+                '<w lemma="strong:H3">Three</w>', "Three",
+            ),
+            entry(
+                5, 1, 4, "verse",
+                '<milestone marker="¶" type="x-p"/>'
+                '<w lemma="strong:H4">Four</w>',
+                "Four",
+            ),
+        ]
+    )
+    write_records(contract, records)
+    config = ConversionConfig(
+        translation_names={"KJV": "kjv"},
+        v1_translations={"kjv": "King James Version"},
+        book_numbers={"Genesis": 1},
+        book_names={"Genesis": "Genesis"},
+        lang_correction={"en": "en"},
+        language_names={"en": "English"},
+        text_direction={"en": "LTR"},
+    )
+
+    result = GetBibleSwordConverter(config, str(output)).convert(
+        str(contract), module_name="KJV"
+    )
+    document = json.loads(open(result, encoding="utf-8").read())
+    editorial = document["books"][0]["chapters"][0]["editorial"]
+
+    assert editorial == [
+        {
+            "order": 0,
+            "type": "heading",
+            "anchor": {"verse": 1, "edge": "before"},
+            "text": "CHAPTER 1.",
+            "heading_type": "chapter",
+            "canonical": False,
+        },
+        {
+            "order": 1,
+            "type": "paragraph",
+            "start": 1,
+            "end": 1,
+        },
+        {
+            "order": 2,
+            "type": "heading",
+            "anchor": {"verse": 2, "edge": "before"},
+            "text": "A new section",
+            "heading_type": "section",
+            "canonical": False,
+        },
+        {
+            "order": 3,
+            "type": "paragraph",
+            "start": 2,
+            "end": 3,
+        },
+        {
+            "order": 4,
+            "type": "paragraph",
+            "start": 4,
+            "end": 4,
+        },
+    ]
+
+
+def test_editorial_is_omitted_without_headings_or_paragraph_markers(
+    tmp_path, monkeypatch
+):
+    module = {
+        "type": "module",
+        "classification": "bible",
+        "name": bv("KJV"),
+        "description": bv("King James Version"),
+        "language": bv("en"),
+        "direction": {"code": 0, "name": "ltr"},
+        "encoding": {"code": 2, "name": "utf8"},
+        "markup": {"code": 7, "name": "osis"},
+    }
+
+    def records(_path):
+        yield module
+        yield entry(
+            0, 1, 1, "verse",
+            '<w lemma="strong:H1">One</w>', "One",
+        )
+
+    monkeypatch.setattr(
+        "getbiblesword_converter.validate_contract",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            module_name="KJV",
+            classification="bible",
+            unknown_record_types=(),
+            path=str(tmp_path / "unused.ndjson"),
+        ),
+    )
+    monkeypatch.setattr("getbiblesword_converter.iter_contract", records)
+    config = ConversionConfig(
+        translation_names={"KJV": "kjv"},
+        v1_translations={"kjv": "King James Version"},
+        book_numbers={"Genesis": 1},
+        book_names={"Genesis": "Genesis"},
+        lang_correction={"en": "en"},
+        language_names={"en": "English"},
+        text_direction={"en": "LTR"},
+    )
+
+    result = GetBibleSwordConverter(config, str(tmp_path / "output")).convert(
+        str(tmp_path / "unused.ndjson"), module_name="KJV"
+    )
+    document = json.loads(open(result, encoding="utf-8").read())
+
+    assert "editorial" not in document["books"][0]["chapters"][0]
 
 
 def test_native_converter_recovers_display_text_from_valid_raw_osis(tmp_path):

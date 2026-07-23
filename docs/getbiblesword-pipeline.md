@@ -13,15 +13,16 @@ explicit and both projects can release and test independently.
    extraction cache is used.
 4. ZIPs are installed into a fresh explicit SWORD root. Absolute paths, traversal,
    links, oversized archives, and conflicting files are rejected.
-5. The reviewed, pinned GetBibleSWORD release extracts each publication module to
-   a transient NDJSON contract. The independent daily smoke workflow follows the
-   latest stable release to expose compatibility changes before promotion.
+5. `conf/GetBibleSwordRelease.json` selects the GetBibleSWORD release for every
+   workflow. Its `latest` policy resolves one exact stable release and checksum
+   for the build before extraction begins.
 6. Builder independently validates the complete v1 stream: zero-based sequence,
    LF framing, byte envelopes, artifact groups, counts, diagnostics, successful
    footer, and exact stream SHA-256.
 7. Python streams the validated entries into compact translation, book, chapter,
    and verse JSON. It retains text, complete token/span data, paragraph markers,
-   headings, and introduction semantics—not extraction envelopes.
+   headings, chapter-level `editorial`, and introduction semantics—not extraction
+   envelopes.
 8. The module ZIPs, SWORD root, and contracts are discarded after the build
    attempt, including a failed conversion.
 9. Generated Scripture files pass hard-size and filesystem safety gates before
@@ -50,16 +51,30 @@ becomes a public endpoint.
 The static API keeps its established translation/book/chapter/verse fields and
 complete token/span model. It additionally projects supported OSIS structure:
 
+- ordered chapter-level `editorial` entries: headings anchored before a verse
+  and complete inclusive paragraph ranges using only `start` and `end` verse
+  numbers;
 - `paragraph: true` on a verse that begins a paragraph;
 - ordered `titles` for chapter headings, section headings, Psalm superscriptions,
   and other typed titles supplied by the module;
 - normalized `introduction` prose at its natural structural level.
 
+The Builder derives `editorial` from the compatibility fields after every
+chapter has been streamed. Headings sort into chapter reading order. When at
+least one explicit paragraph start exists, ranges cover every emitted verse from
+the chapter's first verse through its last; no paragraph ranges are invented for
+a chapter with no source marker. Because finalization happens on the shared
+chapter object, translation, book, and standalone chapter files receive the same
+ordered array.
+
 Display text is content-tolerant. Builder preserves valid UTF-8 sequences and
 maps isolated historic Windows-1252/Latin-1 bytes into Unicode even when a module
 incorrectly declares UTF-8. Optional OSIS token and structural enrichment is used
 only from a valid UTF-8 projection; unusable optional markup does not reject a
-verse whose stripped display text is available.
+verse whose stripped display text is available. Source paragraph formatting may
+place repeated `LF`, `CR`, or `CRLF` characters before a verse; Builder removes
+those leading line endings from `text` while preserving line endings inside the
+verse.
 
 Raw bytes, rendered/stripped projections, base64 values, annotation segments,
 module files, exact configuration-source records, `source`, and `source_contract`
@@ -68,16 +83,26 @@ reviewed semantic mapping exists; unknown contract major versions are rejected.
 
 ## Release installation
 
-`scripts/install_getbiblesword.py` resolves GitHub's latest stable release,
-downloads the matching architecture asset and `.sha256` companion, verifies the
-checksum and GitHub asset digest, rejects unsafe tar members, and installs only
-`usr/bin/getbiblesword`. It writes exact release provenance to
-`.tools/getbiblesword-release.json`.
+`conf/GetBibleSwordRelease.json` is the single default authority for repository
+and version selection. Its schema is:
 
-`--version X.Y.Z` remains available for deterministic reproduction or incident
-investigation. Publication workflows use the reviewed pin; the scheduled native
-smoke workflow uses the default latest-stable policy so a newly published
-extractor release is tested without changing production behavior.
+```json
+{
+  "schema": "getbiblesword-release-policy/v1",
+  "repository": "getbible/getbiblesword",
+  "version": "latest"
+}
+```
+
+`scripts/install_getbiblesword.py` strictly validates that policy, resolves
+GitHub's latest stable release, downloads the matching architecture asset and
+`.sha256` companion, verifies the checksum and GitHub asset digest, rejects unsafe
+tar members, and installs only `usr/bin/getbiblesword`. It writes exact resolved
+release provenance to `.tools/getbiblesword-release.json`.
+
+Every workflow invokes the installer without a duplicated repository or version.
+`--version X.Y.Z`, `--repository`, and `--policy` remain explicit reproduction
+and incident-investigation overrides.
 
 ## Working directories
 
@@ -92,16 +117,18 @@ each build attempt and workflows neither cache nor upload them.
 
 ## Inspectable workflows
 
-`.github/workflows/preview-build.yml` builds the representative test catalog with the
-latest stable binary and uploads only the generated API preview. It never pushes
-to public repositories.
+`.github/workflows/preview-build.yml` builds the representative test catalog with
+the policy-selected latest stable binary and uploads only the generated API
+preview. It never pushes to public repositories.
 
 `.github/workflows/inspect-kjv-api.yml` is a manual, KJV-only diagnostic build. It
 starts from a fresh module download and prints size reports, structural summaries,
 and representative full verse records for Psalms, John, and Revelation chapters
-1–5. It rejects missing data, malformed token/span ranges, source-envelope leaks,
-symlinks, and files at or above 95 MiB. It does not cache, upload, or publish the
-result.
+1–5. It validates exact `editorial` entry fields, contiguous order values, heading
+anchors, boolean canonical flags, and complete non-overlapping paragraph coverage.
+It also rejects verse text beginning with a line ending, missing data, malformed
+token/span ranges, source-envelope leaks, symlinks, and files at or above 95 MiB.
+It does not cache, upload, or publish the result.
 
 ## Production gate
 

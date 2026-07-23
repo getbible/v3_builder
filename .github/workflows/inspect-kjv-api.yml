@@ -32,7 +32,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install latest stable GetBibleSWORD release
+      - name: Install policy-selected GetBibleSWORD release
         run: |
           python scripts/install_getbiblesword.py
           .tools/getbiblesword version

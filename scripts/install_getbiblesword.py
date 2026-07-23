@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Install a checksum-verified getBibleSWORD GitHub release asset.
+"""Install the checksum-verified getBibleSWORD release selected by policy.
 
-The default follows GitHub's latest stable release.  Operators can still pass an
-exact version when reproducing or investigating an older build.
+The checked-in release policy is the default authority for every workflow.
+Operators can still pass an exact version when reproducing or investigating an
+older build.
 """
 
 from __future__ import annotations
@@ -25,15 +26,26 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
 
-DEFAULT_REPOSITORY = "getbible/getbiblesword"
-DEFAULT_VERSION = "latest"
+POLICY_SCHEMA = "getbiblesword-release-policy/v1"
+DEFAULT_POLICY = (
+    Path(__file__).resolve().parents[1] / "conf" / "GetBibleSwordRelease.json"
+)
 _VERSION_PATTERN = re.compile(
     r"^v?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)$"
 )
+_REPOSITORY_PATTERN = re.compile(r"^[0-9A-Za-z_.-]+/[0-9A-Za-z_.-]+$")
 
 
 class InstallError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class ReleasePolicy:
+    """Central selection policy shared by local and GitHub builds."""
+
+    repository: str
+    version: str
 
 
 @dataclass(frozen=True)
@@ -70,6 +82,41 @@ def _requested_version(version: str) -> str:
     if not match:
         raise InstallError("version must be 'latest' or a semantic release version")
     return match.group(1)
+
+
+def load_release_policy(path: str | Path) -> ReleasePolicy:
+    """Load and strictly validate the central getBibleSWORD release policy."""
+
+    source = Path(path).resolve()
+    try:
+        document = json.loads(source.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise InstallError(f"release policy is missing: {source}") from exc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise InstallError(f"release policy is not valid UTF-8 JSON: {source}") from exc
+    if not isinstance(document, dict):
+        raise InstallError("release policy must be a JSON object")
+    expected_fields = {"schema", "repository", "version"}
+    if set(document) != expected_fields:
+        raise InstallError(
+            "release policy fields must be exactly: "
+            + ", ".join(sorted(expected_fields))
+        )
+    if document["schema"] != POLICY_SCHEMA:
+        raise InstallError(f"unsupported release policy schema: {document['schema']!r}")
+    repository = document["repository"]
+    if (
+        not isinstance(repository, str)
+        or _REPOSITORY_PATTERN.fullmatch(repository) is None
+    ):
+        raise InstallError("release policy repository must be in owner/name form")
+    version = document["version"]
+    if not isinstance(version, str):
+        raise InstallError("release policy version must be a string")
+    return ReleasePolicy(
+        repository=repository,
+        version=_requested_version(version),
+    )
 
 
 def _release(repository: str, version: str) -> tuple[dict, str]:
@@ -224,11 +271,18 @@ def install(repository: str, version: str, destination: str) -> Path:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repository", default=DEFAULT_REPOSITORY)
+    parser.add_argument(
+        "--policy",
+        default=str(DEFAULT_POLICY),
+        help="central release-policy JSON file",
+    )
+    parser.add_argument(
+        "--repository",
+        help="override the policy repository for reproduction",
+    )
     parser.add_argument(
         "--version",
-        default=os.environ.get("GETBIBLESWORD_VERSION", DEFAULT_VERSION),
-        help="semantic release version or 'latest' (default)",
+        help="override the policy with a semantic release version or 'latest'",
     )
     parser.add_argument("--destination", default=".tools/getbiblesword")
     parser.add_argument(
@@ -238,7 +292,18 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        installed = install_release(args.repository, args.version, args.destination)
+        policy = load_release_policy(args.policy)
+        repository = (
+            args.repository
+            or os.environ.get("GETBIBLESWORD_REPOSITORY")
+            or policy.repository
+        )
+        version = (
+            args.version
+            or os.environ.get("GETBIBLESWORD_VERSION")
+            or policy.version
+        )
+        installed = install_release(repository, version, args.destination)
         metadata = _write_metadata(installed, args.metadata)
     except InstallError as exc:
         print(f"error: {exc}", file=sys.stderr)

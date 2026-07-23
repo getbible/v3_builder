@@ -18,12 +18,19 @@ from converter import (
     convert_module,
     load_config,
     parse_args,
+    normalize_verse_text,
     _detect_word_data,
     _write_json,
 )
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
+
+def test_normalize_verse_text_removes_only_leading_line_endings():
+    assert normalize_verse_text("\r\n\nVerse line one\nVerse line two\n") == (
+        "Verse line one\nVerse line two\n"
+    )
+
 
 @pytest.fixture
 def conf_dir(tmp_path):

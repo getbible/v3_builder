@@ -8,7 +8,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from converter import ConversionConfig
+from converter import ConversionConfig, normalize_verse_text
 from file_ops import write_json_minified
 from getbiblesword_contract import (
     ContractSummary,
@@ -110,13 +110,116 @@ def _osis_for_tokens(record: dict[str, Any], markup: str) -> str | None:
     return None
 
 
+def _build_chapter_editorial(chapter: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build the ordered chapter-level reading-layout contract.
+
+    Existing ``titles`` and verse-level ``paragraph`` fields remain the source
+    compatibility layer.  ``editorial`` is their compact chapter projection:
+    headings are anchored before a verse, and paragraph starts are closed into
+    inclusive verse ranges that cannot cross the current chapter.
+    """
+
+    verses = [
+        verse
+        for verse in chapter.get("verses", [])
+        if isinstance(verse, dict)
+        and isinstance(verse.get("verse"), int)
+        and verse["verse"] > 0
+    ]
+    if not verses:
+        return []
+
+    verse_positions = {
+        verse["verse"]: position for position, verse in enumerate(verses)
+    }
+    positioned: list[tuple[int, int, int, dict[str, Any]]] = []
+    seen_headings: set[tuple[int, str, str, bool]] = set()
+    sequence = 0
+
+    def add_heading(title: Any, anchor_verse: int) -> None:
+        nonlocal sequence
+        if not isinstance(title, dict):
+            return
+        text = title.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return
+        heading_type = title.get("type")
+        if not isinstance(heading_type, str) or not heading_type.strip():
+            heading_type = "unspecified"
+        canonical = title.get("canonical") is True
+        identity = (anchor_verse, text, heading_type, canonical)
+        if identity in seen_headings:
+            return
+        seen_headings.add(identity)
+        positioned.append(
+            (
+                verse_positions[anchor_verse],
+                0,
+                sequence,
+                {
+                    "type": "heading",
+                    "anchor": {
+                        "verse": anchor_verse,
+                        "edge": "before",
+                    },
+                    "text": text,
+                    "heading_type": heading_type,
+                    "canonical": canonical,
+                },
+            )
+        )
+        sequence += 1
+
+    first_verse = verses[0]["verse"]
+    for title in chapter.get("titles", []):
+        add_heading(title, first_verse)
+    for verse in verses:
+        for title in verse.get("titles", []):
+            add_heading(title, verse["verse"])
+
+    paragraph_starts = [
+        position
+        for position, verse in enumerate(verses)
+        if verse.get("paragraph") is True
+    ]
+    if paragraph_starts:
+        if paragraph_starts[0] != 0:
+            paragraph_starts.insert(0, 0)
+        for index, start_position in enumerate(paragraph_starts):
+            next_position = (
+                paragraph_starts[index + 1]
+                if index + 1 < len(paragraph_starts)
+                else len(verses)
+            )
+            positioned.append(
+                (
+                    start_position,
+                    1,
+                    sequence,
+                    {
+                        "type": "paragraph",
+                        "start": verses[start_position]["verse"],
+                        "end": verses[next_position - 1]["verse"],
+                    },
+                )
+            )
+            sequence += 1
+
+    positioned.sort(key=lambda item: item[:3])
+    return [
+        {"order": order, **entry}
+        for order, (_, _, _, entry) in enumerate(positioned)
+    ]
+
+
 class GetBibleSwordConverter:
     """Build backward-compatible Bible JSON from a validated native contract.
 
     Existing API fields remain unchanged.  Lossless records are transient build
     inputs: byte envelopes, source/config records, and annotation segments are
-    not copied into the static API.  Compact paragraph/title semantics and
-    complete derived token/span data are retained instead.
+    not copied into the static API. Compact chapter editorial, paragraph/title
+    semantics, normalized verse text, and complete derived token/span data are
+    retained instead.
     """
 
     def __init__(
@@ -219,6 +322,16 @@ class GetBibleSwordConverter:
             chapters = list(book.pop("_chapters").values())
             if not any(chapter["verses"] for chapter in chapters):
                 continue
+            for chapter in chapters:
+                if not chapter["verses"]:
+                    continue
+                editorial = _build_chapter_editorial(chapter)
+                if editorial:
+                    # Keep the large verses array last in every emitted chapter
+                    # representation, matching the documented public shape.
+                    verses = chapter.pop("verses")
+                    chapter["editorial"] = editorial
+                    chapter["verses"] = verses
             book["chapters"] = chapters
             bible["books"].append(book)
             book_directory = output_root / abbreviation / str(book_number)
@@ -487,7 +600,7 @@ class GetBibleSwordConverter:
         verse_number: int,
         markup: str,
     ) -> dict[str, Any] | None:
-        text = _entry_text(record, markup)
+        text = normalize_verse_text(_entry_text(record, markup))
         if not text.replace("[]", "").strip():
             return None
         verse: dict[str, Any] = {

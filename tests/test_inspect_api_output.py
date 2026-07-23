@@ -39,16 +39,35 @@ def generated_kjv(tmp_path):
                 "book_name": target.name,
                 "chapter": chapter_number,
                 "name": f"{target.name} {chapter_number}",
-                "paragraphs": [{"verse_start": 1}],
-                "headings": [{"verse_start": 1, "title": f"Section {chapter_number}"}],
+                "editorial": [
+                    {
+                        "order": 0,
+                        "type": "heading",
+                        "anchor": {"verse": 1, "edge": "before"},
+                        "text": f"Section {chapter_number}",
+                        "heading_type": "section",
+                        "canonical": False,
+                    },
+                    {
+                        "order": 1,
+                        "type": "paragraph",
+                        "start": 1,
+                        "end": 2,
+                    },
+                ],
                 "verses": [
                     {
                         "chapter": chapter_number,
                         "verse": 1,
                         "name": f"{target.name} {chapter_number}:1",
                         "text": "Representative text",
-                        "paragraph_start": True,
-                        "heading": f"Section {chapter_number}",
+                        "paragraph": True,
+                        "titles": [
+                            {
+                                "type": "section",
+                                "text": f"Section {chapter_number}",
+                            }
+                        ],
                         "tokens": [
                             {
                                 "token": "Representative text",
@@ -108,6 +127,14 @@ def test_inspection_reports_all_requested_chapters_and_semantics(generated_kjv):
     assert first["verse_count"] == 2
     assert first["tokens"]["token_count"] == 2
     assert first["spans"]["tags"] == {"title": 1}
+    assert first["editorial"]["heading_count"] == 1
+    assert first["editorial"]["paragraph_count"] == 1
+    assert first["editorial"]["entries"][1] == {
+        "order": 1,
+        "type": "paragraph",
+        "start": 1,
+        "end": 2,
+    }
     assert first["paragraph_boundaries"]
     assert first["headings_or_titles"]
     assert result["size_report"]["file_count"] == 17
@@ -169,6 +196,30 @@ def test_inspection_fails_when_verse_retains_nested_source_envelope(generated_kj
     _write_json(chapter_path, chapter)
 
     with pytest.raises(InspectionError, match="forbidden transient field"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_inspection_fails_when_editorial_paragraphs_do_not_cover_chapter(
+    generated_kjv,
+):
+    scripture, hashes = generated_kjv
+    chapter_path = scripture / "kjv" / "19" / "1.json"
+    chapter = json.loads(chapter_path.read_text(encoding="utf-8"))
+    chapter["editorial"][1]["end"] = 1
+    _write_json(chapter_path, chapter)
+
+    with pytest.raises(InspectionError, match="final emitted verse"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_inspection_fails_when_verse_text_starts_with_line_ending(generated_kjv):
+    scripture, hashes = generated_kjv
+    chapter_path = scripture / "kjv" / "19" / "1.json"
+    chapter = json.loads(chapter_path.read_text(encoding="utf-8"))
+    chapter["verses"][0]["text"] = "\n" + chapter["verses"][0]["text"]
+    _write_json(chapter_path, chapter)
+
+    with pytest.raises(InspectionError, match="text begins with a line ending"):
         inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
 
 

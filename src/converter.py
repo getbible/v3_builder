@@ -68,6 +68,12 @@ class ConversionConfig:
         )
 
 
+def normalize_verse_text(text):
+    """Remove source line endings before a verse while preserving its body."""
+
+    return text.lstrip('\r\n')
+
+
 class SwordModuleConverter:
     """Converts SWORD Bible modules to getBible JSON format.
 
@@ -172,6 +178,7 @@ class SwordModuleConverter:
                     text = bible_mod.get(
                         books=[book.name], chapters=[chapter], verses=[verse]
                     )
+                    text = normalize_verse_text(text)
                     cleaned = text.replace('[]', '')
                     if len(text) > 0 and not cleaned.isspace():
                         book_has_verses = True
