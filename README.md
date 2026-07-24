@@ -82,8 +82,8 @@ export GETBIBLESWORD_BIN="$PWD/.tools/getbiblesword"
 The installer reads `conf/GetBibleSwordRelease.json`, verifies both the release
 checksum file and GitHub asset digest, and writes the resolved provenance to
 `.tools/getbiblesword-release.json`. The policy currently follows the latest
-stable release, which resolves to `0.2.0` at the time of this change. Reproduction
-and incident investigation can override it explicitly with `--version 0.2.0`.
+stable release, which resolves to `0.3.0` at the time of this change. Reproduction
+and incident investigation can override it explicitly with `--version 0.3.0`.
 
 Run the representative-module validation build or the full catalog:
 
@@ -121,24 +121,23 @@ These can also be set in `conf/.config` as `getbible.getbiblesword`,
 
 ## API compatibility and semantic enrichment
 
-Translation, book, chapter, and verse fields used by current clients are retained.
-The converter derives complete `tokens` and `spans` from OSIS word markup and
-promotes supported structural markup into compact API fields:
+Translation, book, chapter, and verse Scripture fields used by current clients
+are retained. The converter derives complete `tokens` and `spans` from OSIS word
+markup and promotes supported structural markup into compact API fields:
 
 - `editorial` is the ordered chapter-level reading-layout contract. Headings
   identify a verse and the `before` edge; paragraphs use only inclusive integer
   `start` and `end` verse numbers;
 - `paragraph: true` marks a verse that begins a new paragraph;
-- `titles` contains typed visible headings such as chapter titles and Psalm
-  superscriptions, including title token/span data when available;
+- book-level `titles` retains title metadata belonging to the book itself;
 - module, testament, book, and chapter introduction text remains attached at its
   natural structural level.
 
 `editorial` is emitted identically in the nested chapter objects of translation
-and book documents and in the standalone chapter document. Existing `paragraph`
-and `titles` fields remain available for v3 clients; the chapter projection gives
-new clients one small ordered structure without word coordinates or
-cross-chapter continuation flags. See
+and book documents and in the standalone chapter document. Chapter- and
+verse-level `titles` arrays are deliberately omitted so headings have one
+unambiguous public representation; book-level `titles` and verse-level
+`paragraph` markers remain. See
 [`docs/api-v3.md`](docs/api-v3.md#chapter-editorial-semantics) for its exact
 schema and derivation rules.
 
@@ -177,7 +176,8 @@ Unit tests require no native executable. They cover corrupt streams, sequence an
 footer verification, byte envelopes, ZIP traversal/conflicts, publication
 authorization, semantic projection, publication size limits, and fail-closed Git
 behavior. Integration tests require the resolved latest stable executable and
-download a representative catalog that includes legacy GBF/Windows-1252 content.
+download a representative catalog that includes legacy GBF/Windows-1252 content
+plus real `div type="x-p"` and `div type="paragraph"` Revelation fixtures.
 
 The `Native GetBibleSWORD Smoke Test` workflow performs this real binary-backed
 integration on master, on a daily schedule, and by manual dispatch. The schedule
@@ -196,7 +196,9 @@ directly in the job log.
 
 - The exporter receives no shell command and no stdin.
 - Module names are passed as individual subprocess arguments.
-- Module ZIPs and release tarballs are extracted with path/link checks.
+- Module ZIPs are extracted with path/link checks. Every release-tar path is
+  validated, only the regular `usr/bin/getbiblesword` member is read, and all
+  unrelated members—including library links—are ignored rather than extracted.
 - The central release policy is resolved once per job; its exact stable version
   and asset are checksum-verified and recorded before execution.
 - Artifact symlinks are validated as metadata but never created by Builder.

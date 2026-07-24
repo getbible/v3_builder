@@ -158,16 +158,8 @@ def test_native_converter_emits_lean_semantic_api_shape(tmp_path):
     assert document["books"][0]["titles"] == [
         {"type": "main", "text": "Genesis"}
     ]
-    assert document["books"][0]["chapters"][0]["titles"] == [
-        {"type": "chapter", "text": "Creation"}
-    ]
-    assert verse["titles"] == [
-        {
-            "type": "section",
-            "text": "The Creation",
-            "canonical": True,
-        }
-    ]
+    assert "titles" not in document["books"][0]["chapters"][0]
+    assert "titles" not in verse
     assert document["books"][0]["chapters"][0]["editorial"] == [
         {
             "order": 0,
@@ -201,7 +193,8 @@ def test_native_converter_emits_lean_semantic_api_shape(tmp_path):
     book_document = json.loads(
         (output / "kjv" / "1.json").read_text(encoding="utf-8")
     )
-    assert chapter_document["titles"][0]["text"] == "Creation"
+    assert "titles" not in chapter_document
+    assert "titles" not in chapter_document["verses"][0]
     assert chapter_document["editorial"] == (
         document["books"][0]["chapters"][0]["editorial"]
     )
@@ -308,6 +301,163 @@ def test_editorial_orders_headings_and_closes_complete_paragraph_ranges(tmp_path
             "end": 4,
         },
     ]
+    assert "titles" not in document["books"][0]["chapters"][0]
+    assert all(
+        "titles" not in verse
+        for verse in document["books"][0]["chapters"][0]["verses"]
+    )
+
+
+def test_crosswire_revelation_div_milestones_build_complete_editorial_ranges(
+    tmp_path,
+):
+    """Reproduce the paragraph encodings used by CrossWire Revelation modules."""
+
+    contract = tmp_path / "KJV.ndjson"
+    output = tmp_path / "output"
+    write_contract(contract)
+    records = [
+        record
+        for record in (
+            json.loads(line) for line in contract.read_text().splitlines()
+        )
+        if record["type"] not in {"entry", "footer"}
+    ]
+
+    def revelation_entry(ordinal, verse, raw, stripped):
+        record = entry(ordinal, 1, verse, "verse", raw, stripped)
+        record["key"] = bv(f"Revelation 1:{verse}")
+        record["scope"].update(
+            {
+                "book": 66,
+                "book_name": bv("Revelation"),
+                "book_abbreviation": bv("Rev"),
+                "osis_reference": bv(f"Rev.1.{verse}"),
+            }
+        )
+        return record
+
+    book_record = entry(
+        0,
+        0,
+        0,
+        "book",
+        '<title type="main">Revelation</title>',
+        "Revelation",
+    )
+    book_record["key"] = bv("Revelation")
+    book_record["scope"].update(
+        {
+            "book": 66,
+            "book_name": bv("Revelation"),
+            "book_abbreviation": bv("Rev"),
+            "osis_reference": bv("Rev"),
+        }
+    )
+    records.append(book_record)
+
+    chapter_record = entry(
+        1,
+        1,
+        0,
+        "chapter",
+        '<title type="chapter">REVELATION 1</title>',
+        "REVELATION 1",
+    )
+    chapter_record["key"] = bv("Revelation 1")
+    chapter_record["scope"].update(
+        {
+            "book": 66,
+            "book_name": bv("Revelation"),
+            "book_abbreviation": bv("Rev"),
+            "osis_reference": bv("Rev.1"),
+        }
+    )
+    records.append(chapter_record)
+
+    paragraph_starts = {
+        1: '<div sID="rev1p1" type="x-p"/>'
+        '<title type="section">Prologue</title>',
+        4: '<div sID="rev1p4" type="x-p"/>'
+        '<title type="section">Greetings to the Seven Churches</title>',
+        7: '<div sID="rev1p7" type="x-p"/>',
+        9: '<div sID="rev1p9" type="paragraph"/>'
+        '<title type="section">Vision of the Son of Man</title>',
+        12: '<div sID="rev1p12" type="paragraph"/>',
+    }
+    paragraph_ends = {
+        3: '<div eID="rev1p1" type="x-p"/>',
+        6: '<div eID="rev1p4" type="x-p"/>',
+        8: '<div eID="rev1p7" type="x-p"/>',
+        11: '<div eID="rev1p9" type="paragraph"/>',
+        20: '<div eID="rev1p12" type="paragraph"/>',
+    }
+    for verse in range(1, 21):
+        raw = (
+            paragraph_ends.get(verse - 1, "")
+            + paragraph_starts.get(verse, "")
+            + f'<w lemma="strong:G{verse}">Verse {verse}</w>'
+        )
+        records.append(
+            revelation_entry(verse + 1, verse, raw, f"Verse {verse}")
+        )
+
+    write_records(contract, records)
+    config = ConversionConfig(
+        translation_names={"KJV": "kjv"},
+        v1_translations={"kjv": "King James Version"},
+        book_numbers={"Revelation": 66},
+        book_names={"Revelation": "Revelation"},
+        lang_correction={"en": "en"},
+        language_names={"en": "English"},
+        text_direction={"en": "LTR"},
+    )
+
+    result = GetBibleSwordConverter(config, str(output)).convert(
+        str(contract), module_name="KJV"
+    )
+    document = json.loads(open(result, encoding="utf-8").read())
+    chapter = document["books"][0]["chapters"][0]
+    headings = [
+        (
+            item["anchor"]["verse"],
+            item["text"],
+            item["heading_type"],
+        )
+        for item in chapter["editorial"]
+        if item["type"] == "heading"
+    ]
+    paragraphs = [
+        (item["start"], item["end"])
+        for item in chapter["editorial"]
+        if item["type"] == "paragraph"
+    ]
+
+    assert headings == [
+        (1, "REVELATION 1", "chapter"),
+        (1, "Prologue", "section"),
+        (4, "Greetings to the Seven Churches", "section"),
+        (9, "Vision of the Son of Man", "section"),
+    ]
+    assert paragraphs == [(1, 3), (4, 6), (7, 8), (9, 11), (12, 20)]
+    assert document["books"][0]["titles"] == [
+        {"type": "main", "text": "Revelation"}
+    ]
+    assert "titles" not in chapter
+    assert all("titles" not in verse for verse in chapter["verses"])
+
+    chapter_document = json.loads(
+        (output / "kjv" / "66" / "1.json").read_text(encoding="utf-8")
+    )
+    book_document = json.loads(
+        (output / "kjv" / "66.json").read_text(encoding="utf-8")
+    )
+    assert chapter_document["editorial"] == chapter["editorial"]
+    assert book_document["chapters"][0]["editorial"] == chapter["editorial"]
+    assert "titles" not in chapter_document
+    assert all(
+        "titles" not in verse for verse in chapter_document["verses"]
+    )
 
 
 def test_editorial_is_omitted_without_headings_or_paragraph_markers(

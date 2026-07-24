@@ -21,8 +21,8 @@ explicit and both projects can release and test independently.
    footer, and exact stream SHA-256.
 7. Python streams the validated entries into compact translation, book, chapter,
    and verse JSON. It retains text, complete token/span data, paragraph markers,
-   headings, chapter-level `editorial`, and introduction semantics—not extraction
-   envelopes.
+   book titles, chapter-level `editorial`, and introduction semantics—not
+   extraction envelopes or duplicate chapter/verse title arrays.
 8. The module ZIPs, SWORD root, and contracts are discarded after the build
    attempt, including a failed conversion.
 9. Generated Scripture files pass hard-size and filesystem safety gates before
@@ -55,17 +55,19 @@ complete token/span model. It additionally projects supported OSIS structure:
   and complete inclusive paragraph ranges using only `start` and `end` verse
   numbers;
 - `paragraph: true` on a verse that begins a paragraph;
-- ordered `titles` for chapter headings, section headings, Psalm superscriptions,
-  and other typed titles supplied by the module;
+- ordered book-level `titles` for title metadata belonging to the book;
 - normalized `introduction` prose at its natural structural level.
 
-The Builder derives `editorial` from the compatibility fields after every
-chapter has been streamed. Headings sort into chapter reading order. When at
-least one explicit paragraph start exists, ranges cover every emitted verse from
-the chapter's first verse through its last; no paragraph ranges are invented for
-a chapter with no source marker. Because finalization happens on the shared
-chapter object, translation, book, and standalone chapter files receive the same
-ordered array.
+The Builder derives `editorial` from transient title semantics and public
+verse-level paragraph markers after every chapter has been streamed. It
+recognizes OSIS `milestone type="x-p"`, opening `p`, and CrossWire's opening
+`div type="x-p|paragraph"` forms while rejecting matching `eID` closing
+milestones as starts. Headings sort into chapter reading order. When at least
+one explicit paragraph start exists, ranges cover every emitted verse from the
+chapter's first verse through its last; no paragraph ranges are invented for a
+chapter with no source marker. Finalization then removes the transient chapter
+and verse `titles` arrays. Because it happens on the shared chapter object,
+translation, book, and standalone chapter files receive the same ordered array.
 
 Display text is content-tolerant. Builder preserves valid UTF-8 sequences and
 maps isolated historic Windows-1252/Latin-1 bytes into Unicode even when a module
@@ -97,8 +99,10 @@ and version selection. Its schema is:
 `scripts/install_getbiblesword.py` strictly validates that policy, resolves
 GitHub's latest stable release, downloads the matching architecture asset and
 `.sha256` companion, verifies the checksum and GitHub asset digest, rejects unsafe
-tar members, and installs only `usr/bin/getbiblesword`. It writes exact resolved
-release provenance to `.tools/getbiblesword-release.json`.
+tar paths, and installs only a regular `usr/bin/getbiblesword` member. Other
+members, including the library symlinks introduced by GetBibleSWORD 0.3.0, are
+never extracted. It writes exact resolved release provenance to
+`.tools/getbiblesword-release.json`.
 
 Every workflow invokes the installer without a duplicated repository or version.
 `--version X.Y.Z`, `--repository`, and `--policy` remain explicit reproduction
@@ -119,16 +123,18 @@ each build attempt and workflows neither cache nor upload them.
 
 `.github/workflows/preview-build.yml` builds the representative test catalog with
 the policy-selected latest stable binary and uploads only the generated API
-preview. It never pushes to public repositories.
+preview. The catalog includes AraSVD and WEB so both real CrossWire `div`
+paragraph encodings are exercised. It never pushes to public repositories.
 
 `.github/workflows/inspect-kjv-api.yml` is a manual, KJV-only diagnostic build. It
 starts from a fresh module download and prints size reports, structural summaries,
 and representative full verse records for Psalms, John, and Revelation chapters
 1–5. It validates exact `editorial` entry fields, contiguous order values, heading
 anchors, boolean canonical flags, and complete non-overlapping paragraph coverage.
-It also rejects verse text beginning with a line ending, missing data, malformed
-token/span ranges, source-envelope leaks, symlinks, and files at or above 95 MiB.
-It does not cache, upload, or publish the result.
+It also rejects chapter/verse headings duplicated into `titles`, verse text
+beginning with a line ending, missing data, malformed token/span ranges,
+source-envelope leaks, symlinks, and files at or above 95 MiB. It does not cache,
+upload, or publish the result.
 
 ## Production gate
 

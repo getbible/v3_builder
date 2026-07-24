@@ -85,7 +85,10 @@ A paragraph has exactly `order`, `type: "paragraph"`, `start`, and `end`.
 `start` and `end` are inclusive emitted verse numbers in the current chapter.
 There are no word positions and no cross-chapter continuation fields.
 
-Paragraph ranges are derived from explicit OSIS paragraph starts:
+Paragraph ranges are derived from explicit OSIS paragraph starts. Builder
+recognizes `milestone type="x-p"`, opening `p`, and CrossWire's opening
+`div type="x-p|paragraph"` encodings. An element carrying `eID` closes a
+milestone and never starts a paragraph:
 
 1. If the chapter has no explicit paragraph start, Builder emits no paragraph
    editorial entries.
@@ -101,7 +104,7 @@ remaining faithful to the source markers. Headings may be emitted without
 paragraph entries. The entire `editorial` field is omitted when a chapter has
 neither headings nor explicit paragraph markers.
 
-## Verse and compatibility semantics
+## Verse and book-title semantics
 
 Every emitted verse keeps the established fields:
 
@@ -116,25 +119,25 @@ but preserves line endings that occur inside the verse.
 Supported OSIS structure is projected into compact, optional fields:
 
 - `paragraph: true` means the verse begins a paragraph;
-- `titles` is an ordered list of visible headings, including chapter titles,
-  section headings, and Psalm superscriptions where the module provides them;
 - `tokens` retains word-level lexical attributes and visible word positions;
 - `spans` retains supported annotations over token and visible-word ranges.
 
-A title contains `text`, its OSIS `type` when supplied, optional `canonical` and
-`subtype` values, and title-local `tokens`/`spans` when word markup is available.
-Chapter and book titles are attached at their natural structural level. A title
-inside a verse is attached to that verse, which lets clients locate the heading
-without reconstructing raw OSIS.
+The book object may contain an ordered `titles` list for title metadata belonging
+to that book. A book title contains `text`, its OSIS `type` when supplied,
+optional `canonical` and `subtype` values, and title-local `tokens`/`spans` when
+word markup is available.
 
-The existing `paragraph` and `titles` fields are retained for v3 compatibility
-and preserve richer title metadata. Chapter `editorial` is their deliberately
-small reading-layout projection; it does not duplicate title-local token/span
-data or subtype metadata.
+Chapter and verse objects do not contain `titles`. Builder collects their OSIS
+chapter titles, section headings, Psalm superscriptions, and other visible
+headings as transient conversion semantics, places them in chapter `editorial`
+with their verse anchors, then removes the duplicate title arrays before writing
+any endpoint. Consumers therefore have one public source for headings and never
+need to reconcile `titles` with `editorial`.
 
 Module, testament, book, and chapter introduction prose is normalized into an
 `introduction` list at the appropriate level. Structural title-only entries are
-promoted to `titles` without duplicating the same string as introduction prose.
+promoted to book `titles` or chapter `editorial` without duplicating the same
+string as introduction prose.
 
 ## Transient extraction boundary
 
@@ -161,7 +164,9 @@ This prevents silent semantic loss while keeping the public API small.
 
 ## Publication rules
 
-- Existing stable API fields are not removed or retyped.
+- Scripture, token/span, introduction, and book-title fields are not retyped.
+- Chapter and verse `titles` are intentionally omitted in favor of their single,
+  position-aware `editorial` representation.
 - Semantic fields are additive and deterministic.
 - No emitted verse `text` begins with a line-ending character.
 - Valid upstream content growth is accepted without comparison to an older build.

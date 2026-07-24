@@ -179,3 +179,65 @@ def test_chamorro_legacy_text_is_published_as_unicode(converted_modules):
     assert 'minagof\u00f1a' in verse['text']
     assert 'lay\u00f1a' in verse['text']
     assert '\ufffd' not in verse['text']
+
+
+def test_chapter_and_verse_titles_are_not_duplicated_outside_editorial(
+    per_module,
+):
+    for book in per_module['version_data']['books']:
+        for chapter in book['chapters']:
+            assert 'titles' not in chapter
+            assert all('titles' not in verse for verse in chapter['verses'])
+
+
+@pytest.mark.parametrize(
+    ('abbreviation', 'expected_headings', 'expected_paragraphs'),
+    [
+        (
+            'arabicsv',
+            [1, 4, 9],
+            [(1, 3), (4, 6), (7, 8), (9, 11), (12, 20)],
+        ),
+        (
+            'web',
+            [],
+            [
+                (1, 2),
+                (3, 3),
+                (4, 6),
+                (7, 7),
+                (8, 8),
+                (9, 11),
+                (12, 16),
+                (17, 20),
+            ],
+        ),
+    ],
+)
+def test_revelation_div_paragraph_encodings_are_preserved(
+    converted_modules,
+    abbreviation,
+    expected_headings,
+    expected_paragraphs,
+):
+    """Protect both CrossWire div type=x-p and type=paragraph encodings."""
+
+    translation = converted_modules[abbreviation]['version_data']
+    revelation = next(book for book in translation['books'] if book['nr'] == 66)
+    chapter = next(
+        item for item in revelation['chapters'] if item['chapter'] == 1
+    )
+    editorial = chapter['editorial']
+    heading_anchors = [
+        item['anchor']['verse']
+        for item in editorial
+        if item['type'] == 'heading'
+    ]
+    paragraph_ranges = [
+        (item['start'], item['end'])
+        for item in editorial
+        if item['type'] == 'paragraph'
+    ]
+
+    assert heading_anchors == expected_headings
+    assert paragraph_ranges == expected_paragraphs
