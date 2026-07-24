@@ -113,10 +113,11 @@ def _osis_for_tokens(record: dict[str, Any], markup: str) -> str | None:
 def _build_chapter_editorial(chapter: dict[str, Any]) -> list[dict[str, Any]]:
     """Build the ordered chapter-level reading-layout contract.
 
-    Existing ``titles`` and verse-level ``paragraph`` fields remain the source
-    compatibility layer.  ``editorial`` is their compact chapter projection:
-    headings are anchored before a verse, and paragraph starts are closed into
-    inclusive verse ranges that cannot cross the current chapter.
+    Transient chapter/verse ``titles`` and public verse-level ``paragraph``
+    markers are the projection inputs. ``editorial`` is the public chapter
+    heading contract: headings are anchored before a verse, and paragraph
+    starts are closed into inclusive verse ranges that cannot cross the current
+    chapter.
     """
 
     verses = [
@@ -212,14 +213,28 @@ def _build_chapter_editorial(chapter: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-class GetBibleSwordConverter:
-    """Build backward-compatible Bible JSON from a validated native contract.
+def _finalize_chapter(chapter: dict[str, Any]) -> None:
+    """Finalize editorial and remove its transient duplicate title fields."""
 
-    Existing API fields remain unchanged.  Lossless records are transient build
-    inputs: byte envelopes, source/config records, and annotation segments are
-    not copied into the static API. Compact chapter editorial, paragraph/title
-    semantics, normalized verse text, and complete derived token/span data are
-    retained instead.
+    editorial = _build_chapter_editorial(chapter)
+    chapter.pop("titles", None)
+    verses = chapter.pop("verses")
+    for verse in verses:
+        verse.pop("titles", None)
+    if editorial:
+        chapter["editorial"] = editorial
+    # Keep the usually large verses array last in every public representation.
+    chapter["verses"] = verses
+
+
+class GetBibleSwordConverter:
+    """Build Bible JSON from a validated native contract.
+
+    Lossless records and chapter/verse title collections are transient build
+    inputs: byte envelopes, source/config records, annotation segments, and
+    duplicate title arrays are not copied into the static API. Book titles,
+    compact chapter editorial, verse paragraph markers, normalized verse text,
+    and complete derived token/span data are retained instead.
     """
 
     def __init__(
@@ -325,13 +340,7 @@ class GetBibleSwordConverter:
             for chapter in chapters:
                 if not chapter["verses"]:
                     continue
-                editorial = _build_chapter_editorial(chapter)
-                if editorial:
-                    # Keep the large verses array last in every emitted chapter
-                    # representation, matching the documented public shape.
-                    verses = chapter.pop("verses")
-                    chapter["editorial"] = editorial
-                    chapter["verses"] = verses
+                _finalize_chapter(chapter)
             book["chapters"] = chapters
             bible["books"].append(book)
             book_directory = output_root / abbreviation / str(book_number)

@@ -555,12 +555,20 @@ class TestStructuralSemantics:
         '<w lemma="strong:G1">Word</w>',
         '<p><w lemma="strong:G1">Word</w></p>',
         '<p sID="p1"/><w lemma="strong:G1">Word</w>',
+        '<div sID="p2" type="x-p"/><w lemma="strong:G1">Word</w>',
+        '<div sID="p3" type="paragraph"/><w lemma="strong:G1">Word</w>',
+        '<div type="paragraph"><w lemma="strong:G1">Word</w></div>',
     ])
     def test_paragraph_start_patterns(self, raw):
         assert parse_osis_semantics(raw)['paragraph'] is True
 
-    def test_paragraph_end_milestone_is_not_a_start(self):
-        raw = '<p eID="p1"/><w lemma="strong:G1">Word</w>'
+    @pytest.mark.parametrize('raw', [
+        '<milestone eID="p1" type="x-p"/><w lemma="strong:G1">Word</w>',
+        '<p eID="p1"/><w lemma="strong:G1">Word</w>',
+        '<div eID="p2" type="x-p"/><w lemma="strong:G1">Word</w>',
+        '<div eID="p3" type="paragraph"/><w lemma="strong:G1">Word</w>',
+    ])
+    def test_paragraph_end_milestone_is_not_a_start(self, raw):
         assert 'paragraph' not in parse_osis_semantics(raw)
 
     def test_kjv_chapter_title_is_deduplicated(self):

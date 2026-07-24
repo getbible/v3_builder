@@ -414,6 +414,10 @@ def _chapter_summary(
     chapter_number: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     _require_no_source_envelopes(chapter_data, str(path))
+    if "titles" in chapter_data:
+        raise InspectionError(
+            f"{path} retains redundant chapter titles outside editorial"
+        )
     if chapter_data.get("book_nr") != target.number:
         raise InspectionError(
             f"{path} has book_nr={chapter_data.get('book_nr')!r}; expected {target.number}"
@@ -442,6 +446,11 @@ def _chapter_summary(
     verses_with_tokens = 0
     verses_with_spans_field = 0
     for verse in verses:
+        if "titles" in verse:
+            raise InspectionError(
+                f"{path} verse {verse['verse']} retains redundant titles "
+                "outside editorial"
+            )
         text = verse.get("text")
         if not isinstance(text, str) or not text:
             raise InspectionError(

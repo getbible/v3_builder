@@ -62,12 +62,6 @@ def generated_kjv(tmp_path):
                         "name": f"{target.name} {chapter_number}:1",
                         "text": "Representative text",
                         "paragraph": True,
-                        "titles": [
-                            {
-                                "type": "section",
-                                "text": f"Section {chapter_number}",
-                            }
-                        ],
                         "tokens": [
                             {
                                 "token": "Representative text",
@@ -209,6 +203,25 @@ def test_inspection_fails_when_editorial_paragraphs_do_not_cover_chapter(
     _write_json(chapter_path, chapter)
 
     with pytest.raises(InspectionError, match="final emitted verse"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+@pytest.mark.parametrize("location", ["chapter", "verse"])
+def test_inspection_rejects_titles_duplicated_outside_editorial(
+    generated_kjv,
+    location,
+):
+    scripture, hashes = generated_kjv
+    chapter_path = scripture / "kjv" / "19" / "1.json"
+    chapter = json.loads(chapter_path.read_text(encoding="utf-8"))
+    title = {"type": "section", "text": "Duplicate heading"}
+    if location == "chapter":
+        chapter["titles"] = [title]
+    else:
+        chapter["verses"][0]["titles"] = [title]
+    _write_json(chapter_path, chapter)
+
+    with pytest.raises(InspectionError, match="redundant .*titles"):
         inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
 
 

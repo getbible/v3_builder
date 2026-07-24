@@ -85,7 +85,8 @@ OSISCleaner):
     <rdg>, <rdgGroup>, <figure>
 
 Semantic elements:
-    <milestone type="x-p"> and opening <p> elements mark paragraph starts.
+    <milestone type="x-p">, opening <p> elements, and CrossWire's opening
+    <div type="x-p|paragraph"> milestones mark paragraph starts.
     <title> elements are exposed separately with their visible text, type,
     canonical flag, and any word-level token/span data they contain.
     <chapter chapterTitle="..."> supplies a chapter title when no equivalent
@@ -125,6 +126,8 @@ _SPAN_TAGS = {
     'number': lambda el: {'type': el.get('type', '')} if el.get('type') else {},
     'unit': lambda el: {'type': el.get('type', '')} if el.get('type') else {},
 }
+
+_DIV_PARAGRAPH_TYPES = frozenset({'x-p', 'paragraph'})
 
 
 def parse_osis_verse(raw_text, clean_text=None):
@@ -175,8 +178,9 @@ def parse_osis_semantics(raw_text):
     fields.  This projection keeps the small pieces a reader needs after those
     envelopes are discarded:
 
-    - ``paragraph`` is true when the entry starts a paragraph through the
-      common OSIS ``x-p`` milestone or an opening ``p`` element;
+    - ``paragraph`` is true when the entry starts a paragraph through an OSIS
+      ``x-p`` milestone, an opening ``p`` element, or CrossWire's opening
+      ``div`` milestones with type ``x-p`` or ``paragraph``;
     - ``titles`` contains ordered title objects with normalized visible text,
       semantic type, optional canonical/subtype metadata, and word-level data;
     - ``chapterTitle`` is promoted to an equivalent chapter title when a
@@ -200,9 +204,7 @@ def parse_osis_semantics(raw_text):
 
     for element in root.iter():
         tag = _strip_ns(element.tag)
-        if tag == 'milestone' and element.get('type') == 'x-p':
-            semantic['paragraph'] = True
-        elif tag == 'p' and element.get('eID') is None:
+        if _is_paragraph_start(element, tag):
             semantic['paragraph'] = True
         elif tag == 'title':
             title = _semantic_title(element)
@@ -228,6 +230,23 @@ def parse_osis_semantics(raw_text):
     if titles:
         semantic['titles'] = titles
     return semantic
+
+
+def _is_paragraph_start(element, tag):
+    """Return whether *element* is an opening OSIS paragraph boundary.
+
+    CrossWire modules use both container elements and milestone pairs.  A
+    closing milestone carries ``eID`` and must never start a second paragraph.
+    """
+
+    if element.get('eID') is not None:
+        return False
+    element_type = (element.get('type') or '').strip().lower()
+    if tag == 'milestone':
+        return element_type == 'x-p'
+    if tag == 'p':
+        return True
+    return tag == 'div' and element_type in _DIV_PARAGRAPH_TYPES
 
 
 def _semantic_title(element):

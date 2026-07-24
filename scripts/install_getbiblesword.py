@@ -191,9 +191,15 @@ def _extract_executable(archive_bytes: bytes, destination: Path) -> None:
             path = PurePosixPath(member.name)
             if path.is_absolute() or ".." in path.parts:
                 raise InstallError("release archive contains an unsafe path")
-            if member.issym() or member.islnk():
-                raise InstallError("release archive contains a link")
-            if member.isfile() and path.parts[-3:] == ("usr", "bin", "getbiblesword"):
+            is_executable_path = (
+                path.parts[-3:] == ("usr", "bin", "getbiblesword")
+            )
+            if is_executable_path and not member.isfile():
+                raise InstallError(
+                    "getbiblesword executable in the release archive "
+                    "must be a regular file"
+                )
+            if is_executable_path:
                 candidates.append(member)
         if len(candidates) != 1:
             raise InstallError("release archive does not contain one getbiblesword executable")

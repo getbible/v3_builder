@@ -1,9 +1,11 @@
 {
+	"AraSVD" : "arabicsv",
 	"Chamorro" : "chamorro",
 	"ChiNCVs" : "cns",
 	"KJV" : "kjv",
 	"KJVA": "kjva",
 	"TR" : "textusreceptus",
 	"Aleppo" : "aleppo",
-	"WLC" : "codex"
+	"WLC" : "codex",
+	"WEB" : "web"
 }
