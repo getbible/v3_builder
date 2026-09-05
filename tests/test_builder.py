@@ -1,11 +1,17 @@
 """Tests for builder.py — main orchestrator argument parsing and config."""
 
+import hashlib
+import json
 import os
 import pytest
 
 from builder import BuildConfig, BuildPipeline, parse_args
+from hasher import DEFAULT_API_BASE_URL
 from git_ops import GitPushError
 from publication_safety import PublicationSafetyError
+
+
+SCHEMA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'schema')
 
 
 def _config(tmp_path, **overrides):
@@ -22,6 +28,7 @@ def _config(tmp_path, **overrides):
         'contracts_dir': str(tmp_path / 'contracts'),
         'sword_root': str(tmp_path / 'sword-root'),
         'publication_policy': str(tmp_path / 'policy.json'),
+        'schema_dir': SCHEMA_DIR,
     }
     values.update(overrides)
     return BuildConfig(**values)
@@ -90,6 +97,17 @@ class TestParseArgs:
         args = parse_args(['--dry'])
         assert args.dry is True
 
+    def test_api_base_url_default_and_override(self):
+        assert parse_args([]).api_base_url == DEFAULT_API_BASE_URL
+        args = parse_args(['--api-base-url', 'https://example.test/v1'])
+        assert args.api_base_url == 'https://example.test/v1'
+
+    def test_config_carries_the_schema_directory(self):
+        config = BuildConfig.from_args([])
+        assert config.schema_dir == os.path.join(config.base_dir, 'schema')
+        assert os.path.isdir(config.schema_dir)
+        assert config.api_base_url == DEFAULT_API_BASE_URL
+
 class TestConfigFile:
     def test_loads_config(self, tmp_path):
         config = tmp_path / '.config'
@@ -104,6 +122,12 @@ class TestConfigFile:
         assert args.zip_dir == '/custom/zip'
         assert args.download is False
         assert args.push is True
+
+    def test_config_sets_api_base_url(self, tmp_path):
+        config = tmp_path / '.config'
+        config.write_text('getbible.api-base-url=https://example.test/v1\n')
+        args = parse_args(['--conf', str(config)])
+        assert args.api_base_url == 'https://example.test/v1'
 
     def test_missing_config_ignored(self, tmp_path):
         args = parse_args(['--conf', str(tmp_path / 'nonexistent')])
@@ -144,6 +168,7 @@ class TestBuildPublicationSafety:
         pipeline = BuildPipeline(config)
         monkeypatch.setattr(pipeline._scripture_repo, 'validate_output', lambda: None)
         monkeypatch.setattr(pipeline, '_hash', lambda: None)
+        monkeypatch.setattr(pipeline, '_describe', lambda: None)
         monkeypatch.setattr(pipeline, '_prepare_hash_repo', lambda: None)
         monkeypatch.setattr(pipeline, '_copy_public_files', lambda: None)
         error = GitPushError('/scripture', 'GH001', attempts=1, permanent=True)
@@ -210,3 +235,85 @@ class TestTransientInputCleanup:
             pipeline._cleanup_transient_inputs()
 
         assert target.exists()
+
+
+def _write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value) + '\n', encoding='utf-8')
+
+
+def _minimal_tree(root):
+    meta = {
+        'translation': 'King James Version', 'abbreviation': 'kjv', 'lang': 'en',
+        'language': 'English', 'direction': 'LTR', 'encoding': 'UTF-8',
+    }
+    verses = [{'chapter': 1, 'verse': 1, 'name': 'Genesis 1:1', 'text': 'In the beginning.'}]
+    chapters = [{'chapter': 1, 'name': 'Genesis 1', 'verses': verses}]
+    _write_json(root / 'kjv.json', {
+        **meta, 'description': 'KJV', 'books': [{'nr': 1, 'name': 'Genesis', 'chapters': chapters}],
+        'distribution_lcsh': '', 'distribution_version': '', 'distribution_version_date': '',
+        'distribution_abbreviation': 'KJV', 'distribution_about': '', 'distribution_license': '',
+        'distribution_sourcetype': '', 'distribution_source': '', 'distribution_versification': '',
+        'distribution_history': {},
+    })
+    _write_json(root / 'kjv' / '1.json', {**meta, 'nr': 1, 'name': 'Genesis', 'chapters': chapters})
+    _write_json(root / 'kjv' / '1' / '1.json', {
+        **meta, 'book_nr': 1, 'book_name': 'Genesis', 'chapter': 1, 'name': 'Genesis 1',
+        'verses': verses,
+    })
+
+
+class TestTreeDescription:
+    def test_hash_only_build_describes_the_tree_and_publishes_the_description(self, tmp_path):
+        config = _config(tmp_path, hash_only=True)
+        scripture = tmp_path / 'v3_scripture'
+        _minimal_tree(scripture)
+
+        BuildPipeline(config).run()
+
+        document = json.loads((scripture / 'openapi.json').read_text(encoding='utf-8'))
+        assert document['openapi'] == '3.1.0'
+        assert all(path.startswith('/v3/') for path in document['paths'])
+        assert document['components']['parameters']['translation']['schema']['enum'] == ['kjv']
+        digest = hashlib.sha1((scripture / 'openapi.json').read_bytes()).hexdigest()
+        assert (scripture / 'openapi.sha').read_text(encoding='utf-8') == digest + '\n'
+        # The description is not a translation to the hasher.
+        index = json.loads((scripture / 'translations.json').read_text(encoding='utf-8'))
+        assert list(index) == ['kjv']
+        assert index['kjv']['url'] == 'https://api.getbible.net/v3/kjv.json'
+        # It travels to the public hash tree with its checksum, like every index.
+        public = tmp_path / 'v3'
+        assert (public / 'openapi.json').read_bytes() == (scripture / 'openapi.json').read_bytes()
+        assert (public / 'openapi.sha').read_text(encoding='utf-8') == digest + '\n'
+        assert not (public / 'kjv.json').exists()
+
+    def test_the_base_url_moves_the_mount_and_the_index_urls_together(self, tmp_path):
+        config = _config(tmp_path, hash_only=True, api_base_url='https://example.test/v1')
+        scripture = tmp_path / 'v3_scripture'
+        _minimal_tree(scripture)
+
+        BuildPipeline(config).run()
+
+        document = json.loads((scripture / 'openapi.json').read_text(encoding='utf-8'))
+        assert all(path.startswith('/v1/') for path in document['paths'])
+        assert document['info']['version'] == '1'
+        index = json.loads((scripture / 'translations.json').read_text(encoding='utf-8'))
+        assert index['kjv']['url'] == 'https://example.test/v1/kjv.json'
+        assert 'example.test' not in (scripture / 'openapi.json').read_text(encoding='utf-8')
+
+    def test_a_base_url_without_a_version_segment_fails_before_publication(
+        self, tmp_path, monkeypatch,
+    ):
+        config = _config(tmp_path, hash_only=True, api_base_url='https://example.test/')
+        scripture = tmp_path / 'v3_scripture'
+        _minimal_tree(scripture)
+        pipeline = BuildPipeline(config)
+        monkeypatch.setattr(
+            pipeline, '_prepare_hash_repo',
+            lambda: pytest.fail('publication must not start without a description'),
+        )
+
+        with pytest.raises(ValueError, match='version segment'):
+            pipeline.run()
+
+        assert not (scripture / 'openapi.json').exists()

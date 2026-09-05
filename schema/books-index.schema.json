@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "books-index.schema.json",
+  "title": "Books index",
+  "description": "Every book of one translation, keyed by book number: the book document's members except its chapters, with the URL the document was built for and the SHA-1 of its bytes.",
+  "type": "object",
+  "propertyNames": {
+    "pattern": "^[1-9][0-9]*$"
+  },
+  "additionalProperties": {
+    "type": "object",
+    "properties": {
+      "translation": {
+        "type": "string",
+        "description": "Display name of the translation."
+      },
+      "abbreviation": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]{0,29}$",
+        "description": "The translation's identifier and the first path segment of every one of its documents."
+      },
+      "lang": {
+        "type": "string",
+        "description": "Language code of the translation."
+      },
+      "language": {
+        "type": "string",
+        "description": "Language name; empty when the builder's tables have no name for the code."
+      },
+      "direction": {
+        "type": "string",
+        "description": "Writing direction of the text, LTR or RTL."
+      },
+      "encoding": {
+        "type": "string",
+        "description": "Character encoding declared by the source module. The generated documents are always UTF-8."
+      },
+      "nr": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 83,
+        "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical books continue to 83."
+      },
+      "name": {
+        "type": "string",
+        "description": "Name of the book in the translation's language."
+      },
+      "titles": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "$ref": "title.schema.json"
+        },
+        "description": "Title metadata belonging to this level, in source order."
+      },
+      "introduction": {
+        "$ref": "introduction.schema.json"
+      },
+      "url": {
+        "type": "string",
+        "format": "uri",
+        "description": "The public URL the document was built for."
+      },
+      "sha": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}$",
+        "description": "SHA-1 of the document's bytes, the same value its .sha file holds."
+      }
+    },
+    "required": [
+      "translation",
+      "abbreviation",
+      "lang",
+      "language",
+      "direction",
+      "encoding",
+      "nr",
+      "name",
+      "url",
+      "sha"
+    ],
+    "additionalProperties": false
+  }
+}

@@ -1,8 +1,10 @@
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
+from openapi import describe_tree
 from scripts.inspect_api_output import (
     InspectionError,
     TARGET_BOOKS,
@@ -11,6 +13,8 @@ from scripts.inspect_api_output import (
     main,
     scan_output_sizes,
 )
+
+SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schema"
 
 
 def _write_json(path: Path, value) -> None:
@@ -103,6 +107,11 @@ def generated_kjv(tmp_path):
             "books": books,
         },
     )
+    _write_json(
+        scripture / "translations.json",
+        {"kjv": {"translation": "King James Version", "abbreviation": "kjv"}},
+    )
+    describe_tree(str(scripture), mount="/v3", schema_dir=str(SCHEMA_DIR))
     return scripture, hashes
 
 
@@ -131,7 +140,11 @@ def test_inspection_reports_all_requested_chapters_and_semantics(generated_kjv):
     }
     assert first["paragraph_boundaries"]
     assert first["headings_or_titles"]
-    assert result["size_report"]["file_count"] == 17
+    assert result["size_report"]["file_count"] == 20
+    assert result["openapi"]["mount"] == "/v3"
+    assert result["openapi"]["translations"] == ["kjv"]
+    assert result["openapi"]["path_count"] == 14
+    assert "chapter" in result["openapi"]["schemas"]
 
 
 def test_cli_prints_bounded_inspection_to_stdout(generated_kjv, capsys):
@@ -156,6 +169,7 @@ def test_cli_prints_bounded_inspection_to_stdout(generated_kjv, capsys):
     assert "JOHN (book 43) — CHAPTERS 1–5" in captured.out
     assert "REVELATION (book 66) — CHAPTERS 1–5" in captured.out
     assert "Representative API verse records" in captured.out
+    assert "GENERATED TREE DESCRIPTION" in captured.out
     assert "INSPECTION PASSED" in captured.out
     assert captured.err == ""
 
@@ -255,3 +269,73 @@ def test_size_report_is_bounded_to_largest_files(tmp_path):
 
     assert report["file_count"] == 5
     assert [item["bytes"] for item in report["largest_files"]] == [5, 4]
+
+
+def _rewrite_openapi(scripture, mutate):
+    path = scripture / "openapi.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    mutate(document)
+    _write_json(path, document)
+    (scripture / "openapi.sha").write_text(
+        hashlib.sha1(path.read_bytes()).hexdigest() + "\n", encoding="utf-8"
+    )
+
+
+def test_inspection_fails_when_the_description_is_missing(generated_kjv):
+    scripture, hashes = generated_kjv
+    (scripture / "openapi.json").unlink()
+
+    with pytest.raises(InspectionError, match="required API file is missing"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_inspection_fails_when_the_description_checksum_is_stale(generated_kjv):
+    scripture, hashes = generated_kjv
+    (scripture / "openapi.sha").write_text("0" * 40 + "\n", encoding="utf-8")
+
+    with pytest.raises(InspectionError, match="does not match"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_inspection_fails_when_the_description_names_a_host(generated_kjv):
+    scripture, hashes = generated_kjv
+    _rewrite_openapi(
+        scripture, lambda document: document.update(servers=[{"url": "https://example.test"}])
+    )
+
+    with pytest.raises(InspectionError, match="names a server or host"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_inspection_fails_when_the_description_omits_the_translation(generated_kjv):
+    scripture, hashes = generated_kjv
+
+    def drop_translation(document):
+        document["components"]["parameters"]["translation"]["schema"]["enum"] = ["web"]
+
+    _rewrite_openapi(scripture, drop_translation)
+
+    with pytest.raises(InspectionError, match="does not list the kjv translation"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_inspection_fails_when_paths_leave_the_version_segment(generated_kjv):
+    scripture, hashes = generated_kjv
+
+    def add_stray_path(document):
+        document["paths"]["/other/translations.json"] = document["paths"]["/v3/translations.json"]
+
+    _rewrite_openapi(scripture, add_stray_path)
+
+    with pytest.raises(InspectionError, match="version segment"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_inspection_fails_when_a_schema_is_not_embedded(generated_kjv):
+    scripture, hashes = generated_kjv
+    _rewrite_openapi(
+        scripture, lambda document: document["components"]["schemas"].pop("verse")
+    )
+
+    with pytest.raises(InspectionError, match="embeds no schema for: verse"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)

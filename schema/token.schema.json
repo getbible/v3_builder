@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "token.schema.json",
+  "title": "Token",
+  "description": "One word-level token of a verse or title. Tokens are listed in reading order. `word_start` and `word_end` locate the token in the whitespace-separated words of the display text (1-based, inclusive; 0 when the token could not be located). Every other member is an attribute of the source OSIS w element: multi-valued attributes are grouped by scheme and `src` is split into positions, any other attribute is kept as its string value.",
+  "type": "object",
+  "properties": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The token text as it appears in the display text."
+    },
+    "word_start": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "First whitespace-separated word of the display text the token covers, 1-based."
+    },
+    "word_end": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Last whitespace-separated word the token covers, inclusive."
+    },
+    "lemma": {
+      "type": "object",
+      "description": "Lexical identifiers grouped by OSIS scheme, for example {\"strong\": [\"H07225\"]}.",
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "morph": {
+      "type": "object",
+      "description": "Morphology codes grouped by OSIS scheme.",
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "xlit": {
+      "type": "object",
+      "description": "Transliterations grouped by OSIS scheme.",
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "src": {
+      "type": "array",
+      "items": {
+        "type": [
+          "integer",
+          "string"
+        ]
+      },
+      "description": "Source word positions of the token; strings only when the source value is not numeric."
+    },
+    "gloss": {
+      "type": "string",
+      "description": "Gloss supplied by the source."
+    },
+    "n": {
+      "type": "string",
+      "description": "The OSIS n attribute of the word."
+    },
+    "type": {
+      "type": "string",
+      "description": "The OSIS type attribute of the word."
+    },
+    "subType": {
+      "type": "string",
+      "description": "The OSIS subType attribute of the word."
+    },
+    "morphSegmented": {
+      "const": true,
+      "description": "Present when the word carries a morphological segment."
+    },
+    "variant": {
+      "const": true,
+      "description": "Present when the word is a textual variant."
+    },
+    "variantType": {
+      "type": "string",
+      "description": "The variant's subType when the source supplies one."
+    }
+  },
+  "required": [
+    "token",
+    "word_start",
+    "word_end"
+  ],
+  "additionalProperties": {
+    "type": "string",
+    "description": "Any other attribute of the source w element, kept as its string value."
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "editorial.schema.json",
+  "title": "Editorial",
+  "description": "The reading layout of one chapter, in reading order. A heading is anchored before a verse; a paragraph is an inclusive range of verse numbers. `order` is the contiguous zero-based position of the entry. When paragraph entries are present they cover every verse of the chapter contiguously, from its first verse to its last. The array is absent when the chapter has neither headings nor explicit paragraph markers.",
+  "type": "array",
+  "minItems": 1,
+  "items": {
+    "oneOf": [
+      {
+        "$ref": "#/$defs/heading"
+      },
+      {
+        "$ref": "#/$defs/paragraph"
+      }
+    ]
+  },
+  "$defs": {
+    "heading": {
+      "title": "Heading",
+      "type": "object",
+      "properties": {
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position of the entry in the array."
+        },
+        "type": {
+          "const": "heading"
+        },
+        "anchor": {
+          "type": "object",
+          "properties": {
+            "verse": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The verse the heading precedes."
+            },
+            "edge": {
+              "const": "before"
+            }
+          },
+          "required": [
+            "verse",
+            "edge"
+          ],
+          "additionalProperties": false
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The heading text."
+        },
+        "heading_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The OSIS title type, or unspecified when the source supplies none."
+        },
+        "canonical": {
+          "type": "boolean",
+          "description": "True only when the source explicitly marks the heading canonical."
+        }
+      },
+      "required": [
+        "order",
+        "type",
+        "anchor",
+        "text",
+        "heading_type",
+        "canonical"
+      ],
+      "additionalProperties": false
+    },
+    "paragraph": {
+      "title": "Paragraph",
+      "type": "object",
+      "properties": {
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position of the entry in the array."
+        },
+        "type": {
+          "const": "paragraph"
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "First verse of the paragraph."
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Last verse of the paragraph, inclusive."
+        }
+      },
+      "required": [
+        "order",
+        "type",
+        "start",
+        "end"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

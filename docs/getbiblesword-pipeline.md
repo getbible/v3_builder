@@ -28,7 +28,10 @@ explicit and both projects can release and test independently.
 9. Generated Scripture files pass hard-size and filesystem safety gates before
    hashing. Content growth is accepted as upstream data rather than treated as a
    corruption signal.
-10. Scripture publication completes before the derived hash repository is
+10. Hashing writes the checksum and index files. `openapi.json`, the host-free
+    description of the hashed tree, is then generated from the translations of
+    the build and the schemas under `schema/`, with its own `.sha` beside it.
+11. Scripture publication completes before the derived hash repository is
     attempted. Any Git error fails the workflow; permanent remote rejections are
     not retried.
 
@@ -48,8 +51,8 @@ values preserve exact bytes for validation and semantic derivation; optional UTF
 members are convenience projections. The contract is not an archive and never
 becomes a public endpoint.
 
-The static API keeps its established translation/book/chapter/verse fields and
-complete token/span model. It additionally projects supported OSIS structure:
+The generated tree keeps its established translation/book/chapter/verse fields
+and complete token/span model. It additionally projects supported OSIS structure:
 
 - ordered chapter-level `editorial` entries: headings anchored before a verse
   and complete inclusive paragraph ranges using only `start` and `end` verse
@@ -80,8 +83,14 @@ verse.
 
 Raw bytes, rendered/stripped projections, base64 values, annotation segments,
 module files, exact configuration-source records, `source`, and `source_contract`
-are never copied into the API. Unknown v1 record types fail until an explicit,
-reviewed semantic mapping exists; unknown contract major versions are rejected.
+are never copied into the generated documents. Unknown v1 record types fail until
+an explicit, reviewed semantic mapping exists; unknown contract major versions are
+rejected.
+
+Every document type has a JSON Schema under `schema/`. `openapi.json` embeds them
+all, so the description of the tree stands alone, and the unit tests validate
+generated documents against the embedded schemas so the schemas and the output
+cannot drift apart unnoticed.
 
 ## Release installation
 
@@ -122,7 +131,7 @@ each build attempt and workflows neither cache nor upload them.
 ## Inspectable workflows
 
 `.github/workflows/preview-build.yml` builds the representative test catalog with
-the policy-selected latest stable binary and uploads only the generated API
+the policy-selected latest stable binary and uploads only the generated tree
 preview. The catalog includes AraSVD and WEB so both real CrossWire `div`
 paragraph encodings are exercised. It never pushes to public repositories.
 
@@ -131,6 +140,9 @@ starts from a fresh module download and prints size reports, structural summarie
 and representative full verse records for Psalms, John, and Revelation chapters
 1–5. It validates exact `editorial` entry fields, contiguous order values, heading
 anchors, boolean canonical flags, and complete non-overlapping paragraph coverage.
+It checks that `openapi.json` is a host-free description whose paths share one
+version segment, that lists the built translation, embeds every document schema,
+and matches its checksum.
 It also rejects chapter/verse headings duplicated into `titles`, verse text
 beginning with a line ending, missing data, malformed token/span ranges,
 source-envelope leaks, symlinks, and files at or above 95 MiB. It does not cache,
@@ -143,5 +155,6 @@ The Builder integration remains under review until these gates are met:
 - a redistributable driver-spanning conformance corpus;
 - this independent validator/reassembler passing that corpus;
 - deterministic repeated extraction on supported architectures;
-- maintainer review of classification and public API projection;
-- successful comparison against the current published API for all approved Bibles.
+- maintainer review of classification and output projection;
+- successful comparison against the currently published tree for all approved
+  Bibles.

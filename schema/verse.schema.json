@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "verse.schema.json",
+  "title": "Verse",
+  "description": "One verse. `text` is the display text and never begins with a line ending. `paragraph` is present when the verse begins a paragraph. `tokens` and `spans` are present together when the source carries OSIS word markup.",
+  "type": "object",
+  "properties": {
+    "chapter": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Chapter number in the translation's own versification."
+    },
+    "verse": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Verse number in the translation's own versification."
+    },
+    "name": {
+      "type": "string",
+      "description": "Book name, chapter and verse, for example Genesis 1:1."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\r\\n]",
+      "description": "The verse text. Line endings inside the verse are preserved; none begins it."
+    },
+    "paragraph": {
+      "const": true,
+      "description": "Present when the verse begins a paragraph."
+    },
+    "tokens": {
+      "type": "array",
+      "items": {
+        "$ref": "token.schema.json"
+      },
+      "description": "Word-level tokens in reading order; present with spans when the source carries OSIS word markup."
+    },
+    "spans": {
+      "type": "array",
+      "items": {
+        "$ref": "span.schema.json"
+      },
+      "description": "Annotations over token and word ranges; present with tokens."
+    }
+  },
+  "required": [
+    "chapter",
+    "verse",
+    "name",
+    "text"
+  ],
+  "dependentRequired": {
+    "tokens": [
+      "spans"
+    ],
+    "spans": [
+      "tokens"
+    ]
+  },
+  "additionalProperties": false
+}

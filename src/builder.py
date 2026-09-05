@@ -22,7 +22,8 @@ from file_ops import clean_empty_files, move_public_hash_files
 from getbiblesword_converter import GetBibleSwordConverter
 from getbiblesword_reader import GetBibleSwordReader, materialize_sword_root
 from git_ops import GitRepository, push_all_repos
-from hasher import ContentHasher
+from hasher import DEFAULT_API_BASE_URL, ContentHasher
+from openapi import describe_tree, mount_from_base_url
 from publication_policy import PublicationPolicy
 
 
@@ -52,6 +53,8 @@ class BuildConfig:
     sword_root: str = ""
     getbiblesword: str = "getbiblesword"
     publication_policy: str = ""
+    api_base_url: str = DEFAULT_API_BASE_URL
+    schema_dir: str = ""
 
     @classmethod
     def from_args(cls, argv=None):
@@ -78,6 +81,8 @@ class BuildConfig:
             sword_root=args.sword_root,
             getbiblesword=args.getbiblesword,
             publication_policy=args.publication_policy,
+            api_base_url=args.api_base_url,
+            schema_dir=os.path.join(args.base_dir, "schema"),
         )
 
 
@@ -111,6 +116,7 @@ class BuildPipeline:
                 self._cleanup_transient_inputs()
         self._scripture_repo.validate_output()
         self._hash()
+        self._describe()
         self._prepare_hash_repo()
         self._copy_public_files()
         if self._config.push:
@@ -232,7 +238,21 @@ class BuildPipeline:
                 )
 
     def _hash(self):
-        ContentHasher(self._scripture_path).hash_all()
+        ContentHasher(
+            self._scripture_path, api_base_url=self._config.api_base_url
+        ).hash_all()
+
+    def _describe(self):
+        """Write the OpenAPI description of the hashed tree at its root."""
+        schema_dir = self._config.schema_dir or os.path.join(
+            self._config.base_dir, "schema"
+        )
+        document = describe_tree(
+            self._scripture_path,
+            mount=mount_from_base_url(self._config.api_base_url),
+            schema_dir=schema_dir,
+        )
+        log.info("Described the generated tree in %s", document)
 
     def _prepare_hash_repo(self):
         self._hash_repo.prepare(pull=self._config.pull)
@@ -285,6 +305,13 @@ def _parse_raw_args(argv=None):
         default=os.path.join(default_conf, "PublicationPolicy.json"),
         help="default-deny module publication approval manifest",
     )
+    parser.add_argument(
+        "--api-base-url", default=DEFAULT_API_BASE_URL,
+        help=(
+            "public base URL recorded in the generated index files; "
+            "its path is the mount the generated openapi.json describes"
+        ),
+    )
     parser.add_argument("--pull", action="store_true")
     parser.add_argument("--push", action="store_true")
     parser.add_argument("-d", "--no-download", dest="download", action="store_false", default=True)
@@ -328,6 +355,7 @@ def _apply_config_file(args):
         "getbible.sword-root": "sword_root",
         "getbible.getbiblesword": "getbiblesword",
         "getbible.publication-policy": "publication_policy",
+        "getbible.api-base-url": "api_base_url",
     }
     for config_key, attribute in mapping.items():
         if config.get(config_key):
@@ -356,10 +384,11 @@ def run_build(args):
     config.conf_dir = os.path.join(args.base_dir, "conf")
     config.repo_hash = args.repo_hash
     config.repo_scripture = args.repo_scripture
+    config.schema_dir = os.path.join(args.base_dir, "schema")
     for name in (
         "download", "pull", "push", "hash_only", "test", "dry", "set_active",
         "github", "verbose", "contracts_dir", "sword_root", "getbiblesword",
-        "publication_policy",
+        "publication_policy", "api_base_url",
     ):
         if hasattr(args, name):
             setattr(config, name, getattr(args, name))
@@ -376,8 +405,8 @@ def main(argv=None):
     if args.dry:
         for name in (
             "api", "zip_dir", "bible_conf", "contracts_dir", "sword_root",
-            "getbiblesword", "publication_policy", "download", "hash_only", "pull",
-            "push", "test", "repo_hash", "repo_scripture",
+            "getbiblesword", "publication_policy", "api_base_url", "download",
+            "hash_only", "pull", "push", "test", "repo_hash", "repo_scripture",
         ):
             print(f"{name}: {getattr(args, name)}")
         return 0

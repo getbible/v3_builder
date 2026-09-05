@@ -267,6 +267,23 @@ class TestHashVersions:
         with pytest.raises(FileNotFoundError):
             hash_versions('/nonexistent/path')
 
+    def test_tree_description_at_the_root_is_not_a_translation(self, scripture_dir):
+        """A previous build's openapi.json must survive --hash-only untouched."""
+        description = scripture_dir / 'openapi.json'
+        description.write_text('{"openapi":"3.1.0","paths":{}}\n')
+        (scripture_dir / 'openapi.sha').write_text('0' * 40 + '\n')
+
+        result = hash_versions(str(scripture_dir))
+
+        assert 'openapi' not in result
+        assert description.read_text() == '{"openapi":"3.1.0","paths":{}}\n'
+        assert (scripture_dir / 'openapi.sha').read_text() == '0' * 40 + '\n'
+        index = json.loads((scripture_dir / 'translations.json').read_text())
+        assert sorted(index) == ['aov', 'kjv']
+        checksum = json.loads((scripture_dir / 'checksum.json').read_text())
+        assert 'openapi' not in checksum
+        assert 'openapi' not in (scripture_dir / 'translations').read_text()
+
     def test_reformatted_files_are_minified(self, scripture_dir):
         """Regression for the kjv.json / kjva.json > 100 MB push failure.
 

@@ -4,14 +4,17 @@
 
 The builder deliberately emits minified JSON.  This script validates the
 requested inspection surface, reports every chapter's structural shape, and
-prints one complete representative verse per chapter.  It also enforces a
-pre-publication file-size ceiling across every supplied API output root.
+prints one complete representative verse per chapter.  It checks that the
+generated ``openapi.json`` describes the tree it sits in, and enforces a
+pre-publication file-size ceiling across every supplied output root.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -51,6 +54,18 @@ EDITORIAL_HEADING_FIELDS = frozenset(
 )
 EDITORIAL_PARAGRAPH_FIELDS = frozenset({"order", "type", "start", "end"})
 EDITORIAL_ANCHOR_FIELDS = frozenset({"verse", "edge"})
+OPENAPI_VERSION = "3.1.0"
+OPENAPI_DOCUMENT = "openapi.json"
+OPENAPI_CHECKSUM = "openapi.sha"
+# Every document type the description must embed a schema for.
+OPENAPI_SCHEMAS = frozenset(
+    {
+        "translation", "book", "chapter", "translations-index", "books-index",
+        "chapters-index", "checksum-index", "checksum", "verse", "token", "span",
+        "editorial", "title", "introduction",
+    }
+)
+_VERSION_SEGMENT = re.compile(r"^v[0-9]+$")
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -531,6 +546,68 @@ def _chapter_summary(
     return summary, representative
 
 
+def _validate_openapi(root: Path, abbreviation: str) -> dict[str, Any]:
+    """Check that the generated description is true of the tree it sits in.
+
+    The description must be a host-free OpenAPI 3.1 document whose paths all
+    start at one version segment, must list the inspected translation, must
+    embed a schema for every document type, and must match its checksum.
+    """
+
+    path = root / OPENAPI_DOCUMENT
+    document = _json(path)
+    if document.get("openapi") != OPENAPI_VERSION:
+        raise InspectionError(
+            f"{path} is not an OpenAPI {OPENAPI_VERSION} description"
+        )
+    if "servers" in document or "://" in json.dumps(document):
+        raise InspectionError(f"{path} names a server or host")
+    paths = document.get("paths")
+    if not isinstance(paths, dict) or not paths:
+        raise InspectionError(f"{path} describes no paths")
+    # The tree's root documents are the shallowest paths; their directory is
+    # the mount every other path must start at.
+    shallowest = min(paths, key=lambda route: (route.count("/"), route))
+    mount = shallowest.rsplit("/", 1)[0]
+    label = mount.rsplit("/", 1)[-1]
+    if not _VERSION_SEGMENT.match(label) or any(
+        not route.startswith(mount + "/") for route in paths
+    ):
+        raise InspectionError(
+            f"{path} paths do not all start at one version segment: {sorted(paths)}"
+        )
+    components = document.get("components")
+    if not isinstance(components, dict):
+        raise InspectionError(f"{path} has no components")
+    parameter = components.get("parameters", {}).get("translation", {})
+    listed = parameter.get("schema", {}).get("enum")
+    if not isinstance(listed, list) or abbreviation not in listed:
+        raise InspectionError(f"{path} does not list the {abbreviation} translation")
+    schemas = components.get("schemas")
+    if not isinstance(schemas, dict) or not OPENAPI_SCHEMAS.issubset(schemas):
+        missing = sorted(OPENAPI_SCHEMAS - set(schemas or ()))
+        raise InspectionError(f"{path} embeds no schema for: {', '.join(missing)}")
+    checksum_path = root / OPENAPI_CHECKSUM
+    try:
+        expected = checksum_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise InspectionError(f"required checksum is missing: {checksum_path}") from exc
+    actual = hashlib.sha1(path.read_bytes()).hexdigest() + "\n"
+    if expected != actual:
+        raise InspectionError(f"{checksum_path} does not match {path}")
+    return {
+        "file": path.as_posix(),
+        "file_bytes": path.stat().st_size,
+        "title": document.get("info", {}).get("title"),
+        "mount": mount,
+        "path_count": len(paths),
+        "paths": sorted(paths),
+        "translations": listed,
+        "schemas": sorted(schemas),
+        "sha": actual.strip(),
+    }
+
+
 def _require_target_book(
     translation: dict[str, Any], target: BookTarget, translation_path: Path
 ) -> None:
@@ -573,6 +650,7 @@ def inspect_api(
         output_roots,
         size_limit_bytes=size_limit_bytes,
     )
+    openapi_summary = _validate_openapi(root, abbreviation)
     translation_path = root / f"{abbreviation}.json"
     translation = _json(translation_path)
     _require_no_source_envelopes(translation, str(translation_path))
@@ -617,6 +695,7 @@ def inspect_api(
         "inspection": "getbible-kjv-api/v1",
         "abbreviation": abbreviation,
         "translation_fields": sorted(translation),
+        "openapi": openapi_summary,
         "size_report": size_report,
         "books": books_output,
     }
@@ -627,6 +706,8 @@ def _print_inspection(result: dict[str, Any]) -> None:
     print("============================")
     print(f"Inspection contract: {result['inspection']}")
     print(f"Translation fields: {', '.join(result['translation_fields'])}")
+    print("\nGENERATED TREE DESCRIPTION")
+    print(json.dumps(result["openapi"], ensure_ascii=False, indent=2, sort_keys=True))
     print("\nGENERATED API SIZE REPORT")
     print(
         json.dumps(result["size_report"], ensure_ascii=False, indent=2, sort_keys=True)
@@ -649,8 +730,8 @@ def _print_inspection(result: dict[str, Any]) -> None:
     print(
         "All requested books and chapters are present, no source envelopes remain, "
         "verse text has no leading line endings, KJV token/span and editorial "
-        "fields are structurally valid, and every generated API file is below "
-        "the size ceiling."
+        "fields are structurally valid, openapi.json describes the tree it sits "
+        "in, and every generated API file is below the size ceiling."
     )
 
 
