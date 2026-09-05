@@ -69,7 +69,9 @@ lists the books the translation has and
 carrying the same `url` and `sha` members, so nothing need be guessed.
 
 **Addressing.** `book` is the GetBible book number: Genesis is 1, Matthew 40,
-Revelation 66, and the deuterocanonical books continue to 83. `chapter` and
+Revelation 66, and the deuterocanonical and other additional books continue
+to 89. Every book a source module has is published under its number, and
+`books.json` lists exactly which ones a translation has. `chapter` and
 `verse` are the numbers of the translation's own versification. Only books,
 chapters and verses that have text are published as documents. A chapter for
 which the source supplies an introduction but no verse text stays nested in
@@ -446,10 +448,10 @@ def _parameters(abbreviations: list[str]) -> dict[str, Any]:
             "required": True,
             "description": (
                 "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, "
-                "and the deuterocanonical books continue to 83. books.json lists "
-                "the numbers the translation has."
+                "and the deuterocanonical and other additional books continue to "
+                "89. books.json lists the numbers the translation has."
             ),
-            "schema": {"type": "integer", "minimum": 1, "maximum": 83},
+            "schema": {"type": "integer", "minimum": 1, "maximum": 89},
         },
         "chapter": {
             "name": "chapter",

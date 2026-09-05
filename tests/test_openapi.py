@@ -143,7 +143,7 @@ def test_the_translation_parameter_lists_the_translations_of_the_build():
     empty = openapi_document([], mount="/v3", schema_dir=str(SCHEMA_DIR))
     assert "enum" not in empty["components"]["parameters"]["translation"]["schema"]
     book = empty["components"]["parameters"]["book"]["schema"]
-    assert book == {"type": "integer", "minimum": 1, "maximum": 83}
+    assert book == {"type": "integer", "minimum": 1, "maximum": 89}
 
 
 def test_the_mount_follows_the_public_base_url():

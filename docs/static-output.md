@@ -32,6 +32,16 @@ hexadecimal digits and a line feed. A reader watches a document for changes
 through that small sibling, so no JSON document is written without one; the
 KJV inspection fails on any that lacks or mismatches it.
 
+Every book a source module has is published. Book numbers are the one address
+every translation shares, so they come from `conf/bookNumbers.json` alone:
+Genesis is 1, Matthew 40, Revelation 66, the deuterocanonical books continue
+to 83, and the further books some canons carry (Epistle of Jeremiah, Psalms of
+Solomon, Odes, 1 Enoch, Additions to Daniel, Laodiceans) are 84 to 89. A SWORD
+book name the table does not know fails the module's conversion, and two names
+of one module resolving to the same number fail it too; a guessed number would
+file a book under another book's address and merge their verses. Each
+translation's `books.json` lists exactly the books it has.
+
 A chapter for which the source supplies an introduction but no verse text stays
 nested in its book and translation documents with an empty `verses` array and
 its title metadata; it has no standalone document and no entry in
@@ -219,6 +229,11 @@ This prevents silent semantic loss while keeping the generated documents small.
 - Semantic fields are additive and deterministic.
 - No emitted verse `text` begins with a line-ending character.
 - Every JSON document has a `.sha` sibling holding the SHA-1 of its bytes.
+- Every book a module has is published under its number from
+  `conf/bookNumbers.json`; an unknown book name or a number shared by two books
+  of one module fails conversion instead of dropping, renumbering, or merging.
+- A publication repository is reset to its preserved files after it is cloned
+  or pulled, so files an earlier build published are not carried forward.
 - `openapi.json` is generated from the hashed tree on every build, never
   hand-edited, and the hasher never treats it as a translation.
 - Valid upstream content growth is accepted without comparison to an older build.

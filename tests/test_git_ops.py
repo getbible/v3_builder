@@ -330,3 +330,61 @@ class TestFailClosedPushOrder:
         assert hashes.validation_calls == 1
         assert scripture.calls == 0
         assert hashes.calls == 0
+
+
+class TestFreshCloneReset:
+    """A publication repository never carries files an earlier build published."""
+
+    @staticmethod
+    def _seed_remote(tmp_path):
+        import subprocess
+
+        def git(*args, cwd=None):
+            subprocess.run(
+                ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.test', *args],
+                cwd=cwd, check=True, capture_output=True,
+            )
+
+        bare = tmp_path / 'remote.git'
+        git('init', '--bare', '-b', 'master', str(bare))
+        seed = tmp_path / 'seed'
+        git('clone', str(bare), str(seed))
+        (seed / 'README.md').write_text('# published tree\n')
+        (seed / 'LICENSE').write_text('GPL\n')
+        (seed / 'stale.json').write_text('{"old":true}\n')
+        (seed / 'lxx').mkdir()
+        (seed / 'lxx' / '57.json').write_text('{"nr":57,"name":"Odes"}\n')
+        git('add', '.', cwd=str(seed))
+        git('commit', '-q', '-m', 'earlier build', cwd=str(seed))
+        git('push', '-q', 'origin', 'master', cwd=str(seed))
+        return bare
+
+    def test_a_fresh_clone_is_reset_to_its_preserved_files(self, tmp_path):
+        bare = self._seed_remote(tmp_path)
+        target = tmp_path / 'v3_scripture'
+        repo = GitRepository(str(target), str(bare))
+
+        repo.prepare(pull=True)
+
+        assert (target / '.git').is_dir()
+        assert (target / 'README.md').read_text() == '# published tree\n'
+        assert (target / 'LICENSE').exists()
+        assert not (target / 'stale.json').exists()
+        assert not (target / 'lxx').exists()
+
+    def test_a_failed_clone_fails_the_build(self, tmp_path):
+        target = tmp_path / 'v3_scripture'
+        repo = GitRepository(str(target), str(tmp_path / 'missing.git'))
+
+        with pytest.raises(GitOperationError, match='clone'):
+            repo.prepare(pull=True)
+
+        assert not target.exists()
+
+    def test_without_pull_a_missing_directory_is_simply_created(self, tmp_path):
+        target = tmp_path / 'v3_scripture'
+
+        GitRepository(str(target), 'unused.git').prepare(pull=False)
+
+        assert target.is_dir()
+        assert not (target / '.git').exists()
