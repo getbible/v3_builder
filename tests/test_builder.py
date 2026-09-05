@@ -286,6 +286,17 @@ class TestTreeDescription:
         assert (public / 'openapi.json').read_bytes() == (scripture / 'openapi.json').read_bytes()
         assert (public / 'openapi.sha').read_text(encoding='utf-8') == digest + '\n'
         assert not (public / 'kjv.json').exists()
+        # Every JSON document in both trees has a matching .sha sibling.
+        for tree in (scripture, public):
+            documents = sorted(tree.rglob('*.json'))
+            assert documents
+            for document in documents:
+                assert document.with_suffix('.sha').read_text(encoding='utf-8') == (
+                    hashlib.sha1(document.read_bytes()).hexdigest() + '\n'
+                )
+        assert (public / 'translations.sha').exists()
+        assert (public / 'kjv' / 'books.sha').exists()
+        assert (public / 'kjv' / '1' / 'chapters.sha').exists()
 
     def test_the_base_url_moves_the_mount_and_the_index_urls_together(self, tmp_path):
         config = _config(tmp_path, hash_only=True, api_base_url='https://example.test/v1')

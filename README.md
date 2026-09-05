@@ -21,6 +21,8 @@ official SWORD engine through the separately released
   artifacts as transport data before conversion.
 - Keeps the existing document shape and complete token/span fields while deriving
   compact chapter editorial, paragraph, title, and introduction semantics.
+- Writes a `.sha` sibling beside every JSON document, the index and checksum
+  documents included, so a reader can watch any document for changes.
 - Describes the generated tree in a host-free `openapi.json` with every document
   schema embedded, written beside the index files after hashing.
 - Treats display text as multilingual content: valid UTF-8 is preserved and isolated

@@ -533,3 +533,37 @@ class TestHashIntegrity:
 
         assert first_checksum == second_checksum
         assert first_kjv_sha == second_kjv_sha
+
+
+class TestChecksumSiblings:
+    """Every JSON document, the index documents included, has a .sha sibling."""
+
+    def test_every_json_document_has_a_matching_sha_sibling(self, scripture_dir):
+        hash_all(str(scripture_dir))
+
+        documents = sorted(scripture_dir.rglob('*.json'))
+        assert documents
+        for document in documents:
+            sibling = document.with_suffix('.sha')
+            assert sibling.exists(), f'{document} has no .sha sibling'
+            assert sibling.read_text() == sha1_of_file(document) + '\n'
+        for relative in (
+            'translations.sha', 'checksum.sha',
+            'kjv/books.sha', 'kjv/checksum.sha',
+            'kjv/1/chapters.sha', 'kjv/1/checksum.sha',
+            'aov/books.sha', 'aov/1/chapters.sha',
+        ):
+            assert (scripture_dir / relative).exists(), relative
+
+    def test_index_sha_siblings_follow_the_index_documents(self, scripture_dir):
+        hash_all(str(scripture_dir))
+        first = (scripture_dir / 'translations.sha').read_text()
+        (scripture_dir / 'kjv.json').write_text(
+            (scripture_dir / 'kjv.json').read_text().replace('King James Version', 'KJV 1769')
+        )
+
+        hash_all(str(scripture_dir))
+
+        second = (scripture_dir / 'translations.sha').read_text()
+        assert first != second
+        assert second == sha1_of_file(scripture_dir / 'translations.json') + '\n'

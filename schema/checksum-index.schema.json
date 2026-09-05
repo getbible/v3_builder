@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "checksum-index.schema.json",
   "title": "Checksum index",
-  "description": "The SHA-1 of every translation, book or chapter document at one level of the tree, keyed as that level is addressed: by abbreviation at the root, by book number in a translation, by chapter number in a book. Index, checksum and description documents are not listed.",
+  "description": "The SHA-1 of every translation, book or chapter document at one level of the tree, keyed as that level is addressed: by abbreviation at the root, by book number in a translation, by chapter number in a book. Index, checksum and description documents are not listed here; each has its own .sha sibling.",
   "type": "object",
   "additionalProperties": {
     "type": "string",

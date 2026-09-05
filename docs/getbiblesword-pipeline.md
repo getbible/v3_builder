@@ -28,9 +28,10 @@ explicit and both projects can release and test independently.
 9. Generated Scripture files pass hard-size and filesystem safety gates before
    hashing. Content growth is accepted as upstream data rather than treated as a
    corruption signal.
-10. Hashing writes the checksum and index files. `openapi.json`, the host-free
-    description of the hashed tree, is then generated from the translations of
-    the build and the schemas under `schema/`, with its own `.sha` beside it.
+10. Hashing writes the checksum and index files, each with a `.sha` sibling like
+    every other JSON document. `openapi.json`, the host-free description of the
+    hashed tree, is then generated from the translations of the build and the
+    schemas under `schema/`, with its own `.sha` beside it.
 11. Scripture publication completes before the derived hash repository is
     attempted. Any Git error fails the workflow; permanent remote rejections are
     not retried.
@@ -140,9 +141,10 @@ starts from a fresh module download and prints size reports, structural summarie
 and representative full verse records for Psalms, John, and Revelation chapters
 1–5. It validates exact `editorial` entry fields, contiguous order values, heading
 anchors, boolean canonical flags, and complete non-overlapping paragraph coverage.
-It checks that `openapi.json` is a host-free description whose paths share one
-version segment, that lists the built translation, embeds every document schema,
-and matches its checksum.
+It checks that every JSON document has a matching `.sha` sibling, and that
+`openapi.json` is a host-free description whose paths share one version
+segment, that lists the built translation, embeds every document schema, and
+matches its checksum.
 It also rejects chapter/verse headings duplicated into `titles`, verse text
 beginning with a line ending, missing data, malformed token/span ranges,
 source-envelope leaks, symlinks, and files at or above 95 MiB. It does not cache,
