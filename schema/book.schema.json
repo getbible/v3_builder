@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "book.schema.json",
+  "title": "Book",
+  "description": "One book: the translation's metadata, the book's number and name, its title metadata and introduction when the source supplies them, and every chapter. Each nested chapter is what the standalone chapter document holds after the shared metadata.",
+  "type": "object",
+  "properties": {
+    "translation": {
+      "type": "string",
+      "description": "Display name of the translation."
+    },
+    "abbreviation": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,29}$",
+      "description": "The translation's identifier and the first path segment of every one of its documents."
+    },
+    "lang": {
+      "type": "string",
+      "description": "Language code of the translation."
+    },
+    "language": {
+      "type": "string",
+      "description": "Language name; empty when the builder's tables have no name for the code."
+    },
+    "direction": {
+      "type": "string",
+      "description": "Writing direction of the text, LTR or RTL."
+    },
+    "encoding": {
+      "type": "string",
+      "description": "Character encoding declared by the source module. The generated documents are always UTF-8."
+    },
+    "nr": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 83,
+      "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical books continue to 83."
+    },
+    "name": {
+      "type": "string",
+      "description": "Name of the book in the translation's language."
+    },
+    "titles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "title.schema.json"
+      },
+      "description": "Title metadata belonging to this level, in source order."
+    },
+    "introduction": {
+      "$ref": "introduction.schema.json"
+    },
+    "chapters": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "chapter.schema.json#/$defs/entry"
+      },
+      "description": "The chapters of the book, in chapter order."
+    }
+  },
+  "required": [
+    "translation",
+    "abbreviation",
+    "lang",
+    "language",
+    "direction",
+    "encoding",
+    "nr",
+    "name",
+    "chapters"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "entry": {
+      "title": "Book entry",
+      "description": "A book as nested in the translation document: the same members as the standalone book document after the shared metadata.",
+      "type": "object",
+      "properties": {
+        "nr": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 83,
+          "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical books continue to 83."
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the book in the translation's language."
+        },
+        "titles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "title.schema.json"
+          },
+          "description": "Title metadata belonging to this level, in source order."
+        },
+        "introduction": {
+          "$ref": "introduction.schema.json"
+        },
+        "chapters": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "chapter.schema.json#/$defs/entry"
+          },
+          "description": "The chapters of the book, in chapter order."
+        }
+      },
+      "required": [
+        "nr",
+        "name",
+        "chapters"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

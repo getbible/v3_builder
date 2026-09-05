@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "chapter.schema.json",
+  "title": "Chapter",
+  "description": "One chapter: the translation's metadata, the book it belongs to, and its verses, with the optional reading layout and introduction. The same chapter members appear in the chapter nested in the book and translation documents.",
+  "type": "object",
+  "properties": {
+    "translation": {
+      "type": "string",
+      "description": "Display name of the translation."
+    },
+    "abbreviation": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,29}$",
+      "description": "The translation's identifier and the first path segment of every one of its documents."
+    },
+    "lang": {
+      "type": "string",
+      "description": "Language code of the translation."
+    },
+    "language": {
+      "type": "string",
+      "description": "Language name; empty when the builder's tables have no name for the code."
+    },
+    "direction": {
+      "type": "string",
+      "description": "Writing direction of the text, LTR or RTL."
+    },
+    "encoding": {
+      "type": "string",
+      "description": "Character encoding declared by the source module. The generated documents are always UTF-8."
+    },
+    "book_nr": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 83,
+      "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical books continue to 83."
+    },
+    "book_name": {
+      "type": "string",
+      "description": "Name of the book in the translation's language."
+    },
+    "chapter": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Chapter number in the translation's own versification."
+    },
+    "name": {
+      "type": "string",
+      "description": "Book name and chapter, for example Genesis 1."
+    },
+    "introduction": {
+      "$ref": "introduction.schema.json"
+    },
+    "editorial": {
+      "$ref": "editorial.schema.json"
+    },
+    "verses": {
+      "type": "array",
+      "items": {
+        "$ref": "verse.schema.json"
+      },
+      "description": "The verses of the chapter that have text, in verse order.",
+      "minItems": 1
+    }
+  },
+  "required": [
+    "translation",
+    "abbreviation",
+    "lang",
+    "language",
+    "direction",
+    "encoding",
+    "book_nr",
+    "book_name",
+    "chapter",
+    "name",
+    "verses"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "entry": {
+      "title": "Chapter entry",
+      "description": "A chapter as nested in a book or translation document: the same members as the standalone chapter document after the shared metadata. A chapter for which the source supplied an introduction but no verse text is kept with an empty verses array, its titles, and no standalone document.",
+      "type": "object",
+      "properties": {
+        "chapter": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Chapter number in the translation's own versification."
+        },
+        "name": {
+          "type": "string",
+          "description": "Book name and chapter, for example Genesis 1."
+        },
+        "introduction": {
+          "$ref": "introduction.schema.json"
+        },
+        "editorial": {
+          "$ref": "editorial.schema.json"
+        },
+        "verses": {
+          "type": "array",
+          "items": {
+            "$ref": "verse.schema.json"
+          },
+          "description": "The verses of the chapter that have text, in verse order."
+        },
+        "titles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "title.schema.json"
+          },
+          "description": "Title metadata of a chapter without published verses; a chapter with verses carries its headings in editorial instead."
+        }
+      },
+      "required": [
+        "chapter",
+        "name",
+        "verses"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

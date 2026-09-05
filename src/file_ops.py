@@ -17,9 +17,11 @@ import tempfile
 
 log = logging.getLogger(__name__)
 
-# File patterns that should be copied to the public hash repository
+# File patterns that should be copied to the public hash repository. The
+# generated tree description travels with its checksum like every index.
 PUBLIC_FILE_PATTERNS = (
     '.sha',
+    'openapi.json',
     'checksum',
     'checksum.json',
     'translations',

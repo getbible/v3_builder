@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "introduction.schema.json",
+  "title": "Introduction",
+  "description": "Introduction prose attached at its natural level: the translation (module or testament introductions), a book, or a chapter. Each entry is one source introduction.",
+  "type": "array",
+  "minItems": 1,
+  "items": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The introduction text."
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "additionalProperties": false
+  }
+}

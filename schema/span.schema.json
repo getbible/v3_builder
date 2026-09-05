@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "span.schema.json",
+  "title": "Span",
+  "description": "An annotation over a range of tokens: the OSIS context element that marks them (divineName, transChange, hi, q, foreign, inscription, name, speaker, number, unit or seg), the exact text it marks, and the range in both addressings. `token_start` and `token_end` index the verse's tokens array (0-based, inclusive); `word_start` and `word_end` count whitespace-separated words of the display text (1-based, inclusive; 0 when the text could not be located).",
+  "type": "object",
+  "properties": {
+    "tag": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the OSIS element."
+    },
+    "span": {
+      "type": "string",
+      "description": "The exact text the element marks."
+    },
+    "attrs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Retained attributes of the element; absent when there are none."
+    },
+    "token_start": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Index of the first token the span covers."
+    },
+    "token_end": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Index of the last token the span covers, inclusive."
+    },
+    "word_start": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "First whitespace-separated word of the display text the span covers, 1-based."
+    },
+    "word_end": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Last whitespace-separated word the span covers, inclusive."
+    }
+  },
+  "required": [
+    "tag",
+    "span",
+    "token_start",
+    "token_end",
+    "word_start",
+    "word_end"
+  ],
+  "additionalProperties": false
+}

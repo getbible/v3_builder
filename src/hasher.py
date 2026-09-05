@@ -23,11 +23,14 @@ from file_ops import write_json_minified
 
 log = logging.getLogger(__name__)
 
-# Default base URL for the public API
-_DEFAULT_API_BASE_URL = 'https://api.getbible.net/v3'
+# Default public base URL recorded in the generated index files. Its path is
+# also the mount the generated openapi.json describes the tree under.
+DEFAULT_API_BASE_URL = 'https://api.getbible.net/v3'
+_DEFAULT_API_BASE_URL = DEFAULT_API_BASE_URL
 
-# Files to skip when scanning for translation JSON files
-_SKIP_NAMES = frozenset({'translations', 'checksum', 'books', 'chapters'})
+# Root-level JSON files that are not translation documents: the index files
+# this module writes and the tree description written after hashing.
+_SKIP_NAMES = frozenset({'translations', 'checksum', 'books', 'chapters', 'openapi'})
 
 
 class ContentHasher:
@@ -41,7 +44,7 @@ class ContentHasher:
         api_base_url: Base URL for constructing public API links.
     """
 
-    def __init__(self, target_folder, api_base_url=_DEFAULT_API_BASE_URL):
+    def __init__(self, target_folder, api_base_url=DEFAULT_API_BASE_URL):
         if not os.path.isdir(target_folder):
             raise FileNotFoundError(f'Folder {target_folder} not found')
         self._folder = target_folder

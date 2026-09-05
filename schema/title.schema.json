@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "title.schema.json",
+  "title": "Title",
+  "description": "Title metadata belonging to a translation or a book: its visible text, the OSIS title type when the source supplies one, the canonical flag and subtype the source states, and word-level tokens and spans when the title carries word markup.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "description": "OSIS title type, such as main, chapter, section or psalm."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The visible title text."
+    },
+    "canonical": {
+      "type": "boolean",
+      "description": "Whether the source marks the title canonical; absent when the source does not say."
+    },
+    "subtype": {
+      "type": "string",
+      "description": "OSIS subType of the title."
+    },
+    "tokens": {
+      "type": "array",
+      "items": {
+        "$ref": "token.schema.json"
+      },
+      "description": "Word-level tokens in reading order; present with spans when the source carries OSIS word markup."
+    },
+    "spans": {
+      "type": "array",
+      "items": {
+        "$ref": "span.schema.json"
+      },
+      "description": "Annotations over token and word ranges; present with tokens."
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "dependentRequired": {
+    "tokens": [
+      "spans"
+    ],
+    "spans": [
+      "tokens"
+    ]
+  },
+  "additionalProperties": false
+}

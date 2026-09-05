@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "translation.schema.json",
+  "title": "Translation",
+  "description": "One whole translation: its metadata, the source module's description and distribution metadata, title metadata and introductions attached at the translation level, and every book with every chapter and verse. A bulk document; translations.json states its size through its url and sha.",
+  "type": "object",
+  "properties": {
+    "translation": {
+      "type": "string",
+      "description": "Display name of the translation."
+    },
+    "abbreviation": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,29}$",
+      "description": "The translation's identifier and the first path segment of every one of its documents."
+    },
+    "lang": {
+      "type": "string",
+      "description": "Language code of the translation."
+    },
+    "language": {
+      "type": "string",
+      "description": "Language name; empty when the builder's tables have no name for the code."
+    },
+    "direction": {
+      "type": "string",
+      "description": "Writing direction of the text, LTR or RTL."
+    },
+    "encoding": {
+      "type": "string",
+      "description": "Character encoding declared by the source module. The generated documents are always UTF-8."
+    },
+    "description": {
+      "type": "string",
+      "description": "The source module's description of the translation."
+    },
+    "titles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "title.schema.json"
+      },
+      "description": "Title metadata belonging to this level, in source order."
+    },
+    "introduction": {
+      "$ref": "introduction.schema.json"
+    },
+    "books": {
+      "type": "array",
+      "items": {
+        "$ref": "book.schema.json#/$defs/entry"
+      },
+      "description": "The books of the translation that have text, in canonical order."
+    },
+    "distribution_lcsh": {
+      "type": "string",
+      "description": "Library of Congress subject heading of the source module."
+    },
+    "distribution_version": {
+      "type": "string",
+      "description": "Version of the source module."
+    },
+    "distribution_version_date": {
+      "type": "string",
+      "description": "Release date of that version."
+    },
+    "distribution_abbreviation": {
+      "type": "string",
+      "description": "Abbreviation the source module uses for itself."
+    },
+    "distribution_about": {
+      "type": "string",
+      "description": "The source module's own description of the text."
+    },
+    "distribution_license": {
+      "type": "string",
+      "description": "Distribution licence of the text."
+    },
+    "distribution_sourcetype": {
+      "type": "string",
+      "description": "Markup of the source module, such as OSIS."
+    },
+    "distribution_source": {
+      "type": "string",
+      "description": "Provenance of the text as the source module states it."
+    },
+    "distribution_versification": {
+      "type": "string",
+      "description": "Versification system of the source module."
+    },
+    "distribution_history": {
+      "type": "object",
+      "description": "Every history entry of the source module, keyed as the module keys it.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "translation",
+    "abbreviation",
+    "lang",
+    "language",
+    "direction",
+    "encoding",
+    "description",
+    "books",
+    "distribution_lcsh",
+    "distribution_version",
+    "distribution_version_date",
+    "distribution_abbreviation",
+    "distribution_about",
+    "distribution_license",
+    "distribution_sourcetype",
+    "distribution_source",
+    "distribution_versification",
+    "distribution_history"
+  ],
+  "additionalProperties": false
+}

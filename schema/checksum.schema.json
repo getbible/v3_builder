@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "checksum.schema.json",
+  "title": "Checksum",
+  "description": "The content of a .sha file: the SHA-1 of the bytes of the JSON document of the same name, as forty lowercase hexadecimal digits followed by a line feed.",
+  "type": "string",
+  "pattern": "^[0-9a-f]{40}\\n$"
+}

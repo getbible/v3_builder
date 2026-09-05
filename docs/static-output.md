@@ -1,13 +1,13 @@
-# GetBible API v3 output contract
+# Generated static output
 
-Builder produces a compact static Scripture API from a validated, transient
-GetBibleSWORD extraction stream. The extraction stream is a build boundary, not
-an API layer or an archive: it is freshly generated for every build and discarded
-after conversion.
+Builder produces a compact tree of static Scripture JSON documents from a
+validated, transient GetBibleSWORD extraction stream. The extraction stream is
+a build boundary, not an output layer or an archive: it is freshly generated
+for every build and discarded after conversion.
 
-## Static file layout
+## File layout
 
-The public layout remains compatible with existing clients:
+The generated tree keeps its established layout:
 
 ```text
 <abbreviation>.json
@@ -17,12 +17,49 @@ translations.json
 <abbreviation>/books.json
 <abbreviation>/<book-number>/chapters.json
 checksum.json and matching .sha/checksum files
+openapi.json and openapi.sha
 ```
 
 The translation document contains the language, direction, encoding,
 distribution metadata, and its complete book/chapter/verse hierarchy. Book and
 chapter documents repeat the stable translation metadata needed when those files
-are requested directly.
+are read on their own.
+
+A chapter for which the source supplies an introduction but no verse text stays
+nested in its book and translation documents with an empty `verses` array and
+its title metadata; it has no standalone document and no entry in
+`chapters.json`.
+
+## Tree description
+
+`openapi.json` at the root of the generated tree is the OpenAPI 3.1 description
+of every document path, its parameters, and the JSON Schema of each response.
+`src/openapi.py` generates it after hashing, from the translations the build
+produced and the schemas checked in under `schema/`. Those schemas are embedded
+under `components`, so the description stands alone, and its prose carries the
+reading rules below. `openapi.sha` holds its SHA-1 like every other document's
+checksum, and both files are copied to the hash repository with the index files.
+
+The description names no host. Its paths start at the version segment of the
+builder's public base URL (`--api-base-url` or `getbible.api-base-url`; its
+path is `/v3` by default), the same URL the index files record in their `url`
+fields, so the tree and its description move together when the base URL
+changes. A base URL whose path does not end in a version segment fails the
+build before publication. Whoever mounts the tree under another prefix adds a
+`servers` entry of their own.
+
+`schema/*.schema.json` is the source of truth for every document type:
+translation, book and chapter documents, the three index documents, the
+checksum index and `.sha` text, and the verse, token, span, editorial, title
+and introduction objects they contain. A change to what the converter or hasher
+emits is a change to the matching schema. The unit tests validate generated
+documents against the embedded schemas, and the KJV inspection checks that the
+description is a host-free document that lists the built translation, embeds
+every schema, keeps every path under one version segment, and matches its
+checksum.
+
+The extension-less tab-separated listings (`translations`, `books`, `chapters`
+and `checksum`) are text companions of the JSON indexes and are not described.
 
 ## Chapter editorial semantics
 
@@ -131,8 +168,8 @@ Chapter and verse objects do not contain `titles`. Builder collects their OSIS
 chapter titles, section headings, Psalm superscriptions, and other visible
 headings as transient conversion semantics, places them in chapter `editorial`
 with their verse anchors, then removes the duplicate title arrays before writing
-any endpoint. Consumers therefore have one public source for headings and never
-need to reconcile `titles` with `editorial`.
+any document. Headings therefore have one representation, and `titles` never
+has to be reconciled with `editorial`.
 
 Module, testament, book, and chapter introduction prose is normalized into an
 `introduction` list at the appropriate level. Structural title-only entries are
@@ -151,7 +188,7 @@ The module ZIP, materialized SWORD installation, and validated NDJSON are delete
 after the build attempt, including failed conversions. They are not cached,
 uploaded, committed, or retained as build artifacts.
 
-The following extraction-only data is deliberately absent from every public API
+The following extraction-only data is deliberately absent from every generated
 document:
 
 - `source` and `source_contract` envelopes;
@@ -160,7 +197,7 @@ document:
 - module filesystem artifacts and exact configuration-source records.
 
 An unknown contract major version or unmapped v1 record type fails conversion.
-This prevents silent semantic loss while keeping the public API small.
+This prevents silent semantic loss while keeping the generated documents small.
 
 ## Publication rules
 
@@ -169,6 +206,8 @@ This prevents silent semantic loss while keeping the public API small.
   position-aware `editorial` representation.
 - Semantic fields are additive and deterministic.
 - No emitted verse `text` begins with a line-ending character.
+- `openapi.json` is generated from the hashed tree on every build, never
+  hand-edited, and the hasher never treats it as a translation.
 - Valid upstream content growth is accepted without comparison to an older build.
 - Files at or above 95 MiB fail before hashing or publication.
 - Symlinks and special files in generated output fail validation.
@@ -178,6 +217,6 @@ This prevents silent semantic loss while keeping the public API small.
 
 The manual `Inspect fresh KJV API output` workflow builds KJV from a fresh module
 download, validates the exact `editorial` object shapes and range coverage,
-prints bounded structural summaries and representative records for Psalms, John,
-and Revelation chapters 1–5, and applies the same envelope and size checks
-without publishing anything.
+checks the generated tree description, prints bounded structural summaries and
+representative records for Psalms, John, and Revelation chapters 1–5, and
+applies the same envelope and size checks without publishing anything.

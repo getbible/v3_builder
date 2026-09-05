@@ -132,6 +132,8 @@ def hashed_scripture(tmp_path):
     (s / 'checksum.json').write_text('{"kjv": "abc123"}')
     (s / 'translations').write_text('#\theader\n')
     (s / 'translations.json').write_text('{}')
+    (s / 'openapi.json').write_text('{"openapi":"3.1.0"}\n')
+    (s / 'openapi.sha').write_text('0' * 40 + '\n')
 
     (s / 'kjv' / '1.sha').write_text('def456\n')
     (s / 'kjv' / 'checksum').write_text('#\tfilename\tsha\n')
@@ -197,6 +199,13 @@ class TestMovePublicHashFiles:
         assert (dest / 'checksum.json').exists()
         assert (dest / 'kjv' / 'checksum').exists()
         assert (dest / 'kjv' / 'checksum.json').exists()
+
+    def test_copies_the_tree_description_with_its_checksum(self, hashed_scripture, tmp_path):
+        dest = tmp_path / 'public'
+        dest.mkdir()
+        move_public_hash_files(str(hashed_scripture), str(dest))
+        assert (dest / 'openapi.json').read_text() == '{"openapi":"3.1.0"}\n'
+        assert (dest / 'openapi.sha').read_text() == '0' * 40 + '\n'
 
     def test_copies_translations_files(self, hashed_scripture, tmp_path):
         dest = tmp_path / 'public'

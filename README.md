@@ -1,12 +1,14 @@
-# getBible API Builder v3
+# getBible Scripture Builder v3
 
 [![Build](https://github.com/getbible/v3_builder/actions/workflows/build.yml/badge.svg)](https://github.com/getbible/v3_builder/actions/workflows/build.yml)
 [![Tests](https://github.com/getbible/v3_builder/actions/workflows/ci.yml/badge.svg)](https://github.com/getbible/v3_builder/actions/workflows/ci.yml)
 [![Native Smoke](https://github.com/getbible/v3_builder/actions/workflows/native-smoke.yml/badge.svg?branch=master)](https://github.com/getbible/v3_builder/actions/workflows/native-smoke.yml)
 [![Preview](https://github.com/getbible/v3_builder/actions/workflows/preview-build.yml/badge.svg)](https://github.com/getbible/v3_builder/actions/workflows/preview-build.yml)
 
-Builder v3 produces getBible's static Scripture JSON API from CrossWire SWORD
-modules. The master branch replaces PySword in the production path with the
+Builder v3 produces getBible's static Scripture JSON tree from CrossWire SWORD
+modules: one document per translation, book, and chapter, the index and
+checksum files beside them, and an OpenAPI description of the whole tree. The
+master branch replaces PySword in the production path with the
 official SWORD engine through the separately released
 [`getbiblesword`](https://github.com/getbible/getbiblesword) executable.
 
@@ -17,14 +19,16 @@ official SWORD engine through the separately released
   and the footer SHA-256 before Python sees trusted records.
 - Verifies raw entries, SWORD projections, attributes, configuration sources, and
   artifacts as transport data before conversion.
-- Keeps the existing API shape and complete token/span fields while deriving compact
-  chapter editorial, paragraph, title, and introduction semantics.
+- Keeps the existing document shape and complete token/span fields while deriving
+  compact chapter editorial, paragraph, title, and introduction semantics.
+- Describes the generated tree in a host-free `openapi.json` with every document
+  schema embedded, written beside the index files after hashing.
 - Treats display text as multilingual content: valid UTF-8 is preserved and isolated
   legacy Windows-1252/Latin-1 bytes are converted instead of rejecting the catalog.
 - Treats module ZIPs, the SWORD installation, and lossless contracts as transient
   working data and discards them after every build.
 - Applies a default-deny publication policy before a module can enter a build.
-- Keeps C++ extraction and Python API generation as independently releasable and
+- Keeps C++ extraction and Python JSON generation as independently releasable and
   testable projects.
 
 Every workflow reads `conf/GetBibleSwordRelease.json`. Its `version: "latest"`
@@ -42,7 +46,9 @@ CrossWire ZIPs
   -> one transient lossless NDJSON contract per module
   -> independent Python validator
   -> translation/book/chapter JSON
-  -> existing hashes and publication repositories
+  -> existing hashes and index files
+  -> openapi.json describing the hashed tree
+  -> publication repositories
 ```
 
 Transport and publication remain fail-closed: a missing, unauthorized, incomplete,
@@ -113,17 +119,18 @@ Important native options:
 | `--contracts` | Validated NDJSON working directory |
 | `--sword-root` | Fresh explicit SWORD installation |
 | `--publication-policy` | Default-deny approval manifest |
-| `--bconf` | Requested SWORD-module-to-API map |
+| `--bconf` | Requested SWORD-module-to-abbreviation map |
+| `--api-base-url` | Public base URL recorded in index `url` fields; its version segment mounts the tree description |
 
 These can also be set in `conf/.config` as `getbible.getbiblesword`,
-`getbible.contracts`, `getbible.sword-root`, and
-`getbible.publication-policy`.
+`getbible.contracts`, `getbible.sword-root`, `getbible.publication-policy`,
+and `getbible.api-base-url`.
 
-## API compatibility and semantic enrichment
+## Output compatibility and semantic enrichment
 
-Translation, book, chapter, and verse Scripture fields used by current clients
-are retained. The converter derives complete `tokens` and `spans` from OSIS word
-markup and promotes supported structural markup into compact API fields:
+The established translation, book, chapter, and verse fields are retained. The
+converter derives complete `tokens` and `spans` from OSIS word markup and
+promotes supported structural markup into compact fields:
 
 - `editorial` is the ordered chapter-level reading-layout contract. Headings
   identify a verse and the `before` edge; paragraphs use only inclusive integer
@@ -138,14 +145,14 @@ and book documents and in the standalone chapter document. Chapter- and
 verse-level `titles` arrays are deliberately omitted so headings have one
 unambiguous public representation; book-level `titles` and verse-level
 `paragraph` markers remain. See
-[`docs/api-v3.md`](docs/api-v3.md#chapter-editorial-semantics) for its exact
-schema and derivation rules.
+[`docs/static-output.md`](docs/static-output.md#chapter-editorial-semantics) for
+its exact schema and derivation rules.
 
 Raw, rendered, stripped, configuration, annotation-segment, and filesystem byte
-envelopes are never copied into the published API. They are validated and used only
-while deriving the JSON, then discarded. Unknown contract records fail closed until
-a reviewed semantic mapping exists, preventing silent data loss without bloating
-every API response.
+envelopes are never copied into the generated documents. They are validated and
+used only while deriving the JSON, then discarded. Unknown contract records fail
+closed until a reviewed semantic mapping exists, preventing silent data loss
+without bloating every generated document.
 
 Text envelopes are decoded independently from transport validation. Valid UTF-8
 sequences remain unchanged. If a historic module contains isolated single-byte text
@@ -154,6 +161,19 @@ mapping with a total Latin-1 fallback. OSIS tokens and structure remain best-eff
 enrichment and are omitted when their source markup is not safe to parse. Repeated
 leading `LF`, `CR`, or `CRLF` characters supplied as paragraph formatting are
 removed from every verse `text` value; line endings inside the verse are preserved.
+
+## Tree description
+
+After hashing, Builder writes `openapi.json` and `openapi.sha` at the root of the
+generated tree and copies them to the hash repository with the index files. The
+description is generated by `src/openapi.py` from the translations of the build
+and the JSON Schemas under `schema/`, which describe every document type the
+converter and hasher emit. It is an OpenAPI 3.1 document that names no host:
+its paths start at the version segment of `--api-base-url`, the same URL the
+index files record, and every schema is embedded so the description stands
+alone. A change to what a document holds is a change to its schema; the unit
+tests validate generated documents against the embedded schemas. See
+[`docs/static-output.md`](docs/static-output.md#tree-description).
 
 ## Publication authorization
 
@@ -174,8 +194,9 @@ python -m pytest tests_integration/ -v --run-integration
 
 Unit tests require no native executable. They cover corrupt streams, sequence and
 footer verification, byte envelopes, ZIP traversal/conflicts, publication
-authorization, semantic projection, publication size limits, and fail-closed Git
-behavior. Integration tests require the resolved latest stable executable and
+authorization, semantic projection, the generated tree description and its
+schemas, publication size limits, and fail-closed Git behavior. Integration tests
+require the resolved latest stable executable and
 download a representative catalog that includes legacy GBF/Windows-1252 content
 plus real `div type="x-p"` and `div type="paragraph"` Revelation fixtures.
 
@@ -185,12 +206,13 @@ is deliberate: a newly published GetBibleSWORD release is tested even when Build
 has not changed. Publication and preview workflows consume that same central
 latest-stable policy.
 
-The `Test Build` workflow builds the representative real modules and uploads only the generated
-static API preview. Lossless contracts are not uploaded or cached. The manual
-`Inspect fresh KJV API output` workflow performs a fresh KJV-only build and prints
-bounded structure reports, validates the exact chapter `editorial` contract, and
-prints representative records for Psalms, John, and Revelation chapters 1–5
-directly in the job log.
+The `Test Build` workflow builds the representative real modules and uploads only
+the generated tree preview. Lossless contracts are not uploaded or cached. The
+manual `Inspect fresh KJV API output` workflow performs a fresh KJV-only build,
+prints bounded structure reports, validates the exact chapter `editorial`
+contract, checks that `openapi.json` describes the tree it sits in, and prints
+representative records for Psalms, John, and Revelation chapters 1–5 directly
+in the job log.
 
 ## Security and release notes
 
@@ -207,7 +229,8 @@ directly in the job log.
 - Scripture publication must complete before the hash repository is attempted.
 
 See [`AGENTS.md`](AGENTS.md) for contributor invariants.
-See [`docs/api-v3.md`](docs/api-v3.md) for the exact output layers and file layout.
+See [`docs/static-output.md`](docs/static-output.md) for the exact output layers,
+file layout, and tree description.
 
 ## License
 
