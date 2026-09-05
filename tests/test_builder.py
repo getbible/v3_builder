@@ -6,7 +6,7 @@ import os
 import pytest
 
 from builder import BuildConfig, BuildPipeline, parse_args
-from hasher import DEFAULT_API_BASE_URL
+from hasher import DEFAULT_API_BASE_URL, RESERVED_ROOT_NAMES
 from git_ops import GitPushError
 from publication_safety import PublicationSafetyError
 
@@ -301,19 +301,54 @@ class TestTreeDescription:
         assert index['kjv']['url'] == 'https://example.test/v1/kjv.json'
         assert 'example.test' not in (scripture / 'openapi.json').read_text(encoding='utf-8')
 
-    def test_a_base_url_without_a_version_segment_fails_before_publication(
-        self, tmp_path, monkeypatch,
+    @pytest.mark.parametrize('base_url', [
+        'https://example.test/', 'https://example.test/bible/v1', 'example.test/v3',
+    ])
+    def test_an_unusable_base_url_fails_before_any_module_is_downloaded(
+        self, tmp_path, monkeypatch, base_url,
     ):
-        config = _config(tmp_path, hash_only=True, api_base_url='https://example.test/')
-        scripture = tmp_path / 'v3_scripture'
-        _minimal_tree(scripture)
+        config = _config(tmp_path, api_base_url=base_url)
         pipeline = BuildPipeline(config)
+        for step in ('_authorized_modules', '_download', '_prepare_scripture_repo', '_hash'):
+            monkeypatch.setattr(
+                pipeline, step,
+                lambda *args, step=step: pytest.fail(f'{step} ran with an unusable base URL'),
+            )
         monkeypatch.setattr(
-            pipeline, '_prepare_hash_repo',
-            lambda: pytest.fail('publication must not start without a description'),
+            pipeline._scripture_repo, 'validate_output',
+            lambda: pytest.fail('validation ran with an unusable base URL'),
         )
 
-        with pytest.raises(ValueError, match='version segment'):
+        with pytest.raises(ValueError, match='exactly one version segment'):
             pipeline.run()
 
-        assert not (scripture / 'openapi.json').exists()
+        assert not (tmp_path / 'v3_scripture').exists()
+
+    def test_a_trailing_slash_does_not_split_the_index_urls_from_the_mount(self, tmp_path):
+        config = _config(tmp_path, hash_only=True, api_base_url='https://example.test/v1/')
+        scripture = tmp_path / 'v3_scripture'
+        _minimal_tree(scripture)
+
+        BuildPipeline(config).run()
+
+        index = json.loads((scripture / 'translations.json').read_text(encoding='utf-8'))
+        assert index['kjv']['url'] == 'https://example.test/v1/kjv.json'
+        books = json.loads((scripture / 'kjv' / 'books.json').read_text(encoding='utf-8'))
+        assert books['1']['url'] == 'https://example.test/v1/1.json'.replace('/1.json', '/kjv/1.json')
+        document = json.loads((scripture / 'openapi.json').read_text(encoding='utf-8'))
+        assert list(document['paths'])[0] == '/v1/translations.json'
+
+    def test_a_reserved_root_name_cannot_be_an_abbreviation(self, tmp_path):
+        config = _config(tmp_path)
+        _write_json(tmp_path / 'modules.json', {'KJV': 'kjv', 'WEB': 'openapi'})
+        _write_json(tmp_path / 'policy.json', {
+            'schema_version': 1, 'default': 'deny', 'approved_modules': ['KJV', 'WEB'],
+        })
+        pipeline = BuildPipeline(config)
+
+        with pytest.raises(RuntimeError, match='reserved root document name.*openapi'):
+            pipeline._authorized_modules()
+
+        _write_json(tmp_path / 'modules.json', {'KJV': 'kjv', 'WEB': 'web'})
+        assert pipeline._authorized_modules() == ['KJV', 'WEB']
+        assert 'openapi' in RESERVED_ROOT_NAMES

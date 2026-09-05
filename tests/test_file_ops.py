@@ -10,6 +10,7 @@ from file_ops import (
     clean_empty_files,
     move_public_hash_files,
     write_json_minified,
+    write_text_atomic,
 )
 
 
@@ -89,6 +90,28 @@ def test_minified_json_write_removes_temp_when_replace_leaves_source(
 
     assert json.loads(target.read_text(encoding='utf-8')) == {'complete': True}
     assert list(tmp_path.glob('.publication.json.*.tmp')) == []
+
+
+def test_text_write_is_exact_and_leaves_no_temporary(tmp_path):
+    target = tmp_path / 'openapi.sha'
+
+    write_text_atomic('0' * 40 + '\n', target)
+
+    assert target.read_bytes() == b'0' * 40 + b'\n'
+    assert target.stat().st_mode & 0o777 == 0o644
+    assert list(tmp_path.glob('.openapi.sha.*.tmp')) == []
+
+
+def test_text_write_preserves_target_on_low_level_write_failure(tmp_path, monkeypatch):
+    target = tmp_path / 'openapi.sha'
+    target.write_text('1' * 40 + '\n', encoding='utf-8')
+    monkeypatch.setattr('file_ops.os.write', lambda _descriptor, _value: 0)
+
+    with pytest.raises(OSError, match='short write'):
+        write_text_atomic('2' * 40 + '\n', target)
+
+    assert target.read_text(encoding='utf-8') == '1' * 40 + '\n'
+    assert list(tmp_path.glob('.openapi.sha.*.tmp')) == []
 
 
 @pytest.fixture

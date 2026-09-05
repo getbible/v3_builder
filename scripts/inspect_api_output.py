@@ -65,7 +65,7 @@ OPENAPI_SCHEMAS = frozenset(
         "editorial", "title", "introduction",
     }
 )
-_VERSION_SEGMENT = re.compile(r"^v[0-9]+$")
+_VERSION_MOUNT = re.compile(r"^/v[0-9]+$")
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -569,8 +569,7 @@ def _validate_openapi(root: Path, abbreviation: str) -> dict[str, Any]:
     # the mount every other path must start at.
     shallowest = min(paths, key=lambda route: (route.count("/"), route))
     mount = shallowest.rsplit("/", 1)[0]
-    label = mount.rsplit("/", 1)[-1]
-    if not _VERSION_SEGMENT.match(label) or any(
+    if not _VERSION_MOUNT.match(mount) or any(
         not route.startswith(mount + "/") for route in paths
     ):
         raise InspectionError(

@@ -28,9 +28,11 @@ log = logging.getLogger(__name__)
 DEFAULT_API_BASE_URL = 'https://api.getbible.net/v3'
 _DEFAULT_API_BASE_URL = DEFAULT_API_BASE_URL
 
-# Root-level JSON files that are not translation documents: the index files
-# this module writes and the tree description written after hashing.
-_SKIP_NAMES = frozenset({'translations', 'checksum', 'books', 'chapters', 'openapi'})
+# Root-level document names that are not translations: the index files this
+# module writes and the tree description written after hashing. No
+# translation may be abbreviated with one of these names.
+RESERVED_ROOT_NAMES = frozenset({'translations', 'checksum', 'books', 'chapters', 'openapi'})
+_SKIP_NAMES = RESERVED_ROOT_NAMES
 
 
 class ContentHasher:
