@@ -14,8 +14,10 @@ from openapi import (
     CHECKSUM_NAME,
     DOCUMENT_NAME,
     SCHEMA_NAMES,
+    _component_reference,
     describe_tree,
     mount_from_base_url,
+    normalize_base_url,
     openapi_document,
     version_label,
 )
@@ -147,20 +149,44 @@ def test_the_mount_follows_the_public_base_url():
 
 
 @pytest.mark.parametrize(
-    ("base_url", "mount"),
+    ("base_url", "normalized", "mount"),
     [
-        ("https://api.example.test/v3", "/v3"),
-        ("https://api.example.test/v3/", "/v3"),
-        ("https://example.test/bible/v1", "/bible/v1"),
-        ("https://example.test", ""),
-        ("https://example.test/", ""),
+        ("https://api.example.test/v3", "https://api.example.test/v3", "/v3"),
+        ("https://api.example.test/v3/", "https://api.example.test/v3", "/v3"),
+        (" http://example.test:8080/v12 ", "http://example.test:8080/v12", "/v12"),
     ],
 )
-def test_mount_from_base_url(base_url, mount):
+def test_the_base_url_is_normalized_to_a_host_and_one_version_segment(
+    base_url, normalized, mount
+):
+    assert normalize_base_url(base_url) == normalized
     assert mount_from_base_url(base_url) == mount
 
 
-@pytest.mark.parametrize("mount", ["", "/", "/api", "/v3/kjv", "/version3"])
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://example.test",
+        "https://example.test/",
+        "https://example.test/bible/v1",
+        "https://example.test/v3/kjv",
+        "api.example.test/v3",
+        "ftp://example.test/v3",
+        "https://example.test/v3?x=1",
+        "https://example.test/v3#top",
+        "",
+    ],
+)
+def test_a_base_url_without_a_host_and_one_version_segment_is_refused(base_url):
+    with pytest.raises(ValueError, match="exactly one version segment"):
+        normalize_base_url(base_url)
+    with pytest.raises(ValueError, match="exactly one version segment"):
+        mount_from_base_url(base_url)
+
+
+@pytest.mark.parametrize(
+    "mount", ["", "/", "/api", "/v3/kjv", "/version3", "/bible/v1", "/v3/", "v3"]
+)
 def test_a_mount_without_a_version_segment_is_refused(mount):
     with pytest.raises(ValueError, match="version segment"):
         version_label(mount)
@@ -215,6 +241,28 @@ def test_a_schema_that_refers_outside_the_tree_is_refused(tmp_path):
     )
     with pytest.raises(ValueError, match="does not publish"):
         openapi_document(["kjv"], mount="/v3", schema_dir=str(tmp_path))
+
+
+def test_schema_references_are_rewritten_into_the_description():
+    names = ("verse", "token")
+    assert _component_reference("token.schema.json", "verse", names) == "#/components/schemas/token"
+    assert _component_reference("token.json", "verse", names) == "#/components/schemas/token"
+    assert _component_reference("schema/token.schema.json#/$defs/x", "verse", names) == (
+        "#/components/schemas/token/$defs/x"
+    )
+    assert _component_reference("#/$defs/entry", "verse", names) == "#/components/schemas/verse/$defs/entry"
+    with pytest.raises(ValueError, match="does not publish"):
+        _component_reference("note.schema.json", "verse", names)
+    with pytest.raises(ValueError, match="unsupported reference"):
+        _component_reference("token.schema.json#entry", "verse", names)
+
+
+def test_the_prose_states_what_the_tree_actually_guarantees():
+    description = openapi_document(["kjv"], mount="/v3", schema_dir=str(SCHEMA_DIR))["info"]["description"]
+    assert "Every translation, book and chapter document has a `.sha`" in description
+    assert "index and checksum documents\nthemselves have no digest" in description
+    assert "has no document of its own" in description
+    assert "A chapter with verses carries no\n`titles`" in description
 
 
 # ── Generated documents against the embedded schemas ─────────────────────────
@@ -389,6 +437,19 @@ def test_the_embedded_schemas_reject_documents_outside_the_contract(described_tr
     bad_order = json.loads(json.dumps(chapter))
     bad_order["editorial"][0]["order"] = "0"
     assert not _validator(document, "chapter").is_valid(bad_order)
+
+    # Headings have one representation: a nested chapter with verses never
+    # carries titles, and a chapter without verses never carries editorial.
+    book = json.loads((output / "kjv" / "1.json").read_text(encoding="utf-8"))
+    assert _validator(document, "book").is_valid(book)
+    duplicated = json.loads(json.dumps(book))
+    duplicated["chapters"][0]["titles"] = [{"text": "Duplicate heading"}]
+    assert not _validator(document, "book").is_valid(duplicated)
+    laid_out = json.loads(json.dumps(book))
+    laid_out["chapters"][2]["editorial"] = [
+        {"order": 0, "type": "paragraph", "start": 1, "end": 1}
+    ]
+    assert not _validator(document, "book").is_valid(laid_out)
 
     assert not _validator(document, "checksum").is_valid("deadbeef\n")
     assert not _validator(document, "checksum-index").is_valid({"kjv": "deadbeef"})

@@ -48,8 +48,8 @@ Git commit.
 
 The NDJSON contract is authoritative only while a build is running. Its base64
 values preserve exact bytes for validation and semantic derivation; optional UTF-8
-members are convenience projections. The contract is not an archive and never
-becomes a public endpoint.
+members are convenience projections. The contract is not an archive and is
+never published.
 
 The generated tree keeps its established translation/book/chapter/verse fields
 and complete token/span model. It additionally projects supported OSIS structure:

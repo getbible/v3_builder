@@ -4,11 +4,12 @@ File operations for getBible API builder.
 Handles:
 - Cleaning empty directories from scripture output
 - Copying public hash files from scripture repo to public API repo
-- Minified JSON serialization for the public API output
+- Atomic minified JSON and checksum text serialization for the generated tree
 
 Replaces movePublicHashFiles.sh and the cleanSystem() function from run.sh.
 """
 
+import itertools
 import json
 import logging
 import os
@@ -50,6 +51,28 @@ def write_json_minified(data, output_file):
         data: JSON-serializable object to write.
         output_file: Destination path.
     """
+    encoder = json.JSONEncoder(ensure_ascii=False, separators=(',', ':'))
+    _write_atomic(
+        itertools.chain(
+            (chunk.encode('utf-8') for chunk in encoder.iterencode(data)),
+            (b'\n',),
+        ),
+        output_file,
+    )
+
+
+def write_text_atomic(text, output_file):
+    """Atomically write ``text`` as UTF-8, exactly as given.
+
+    Checksum files travel next to the documents they vouch for, so an
+    interrupted build must not leave a truncated one behind: the bytes reach
+    a same-directory temporary file and replace the target in one step.
+    """
+    _write_atomic((text.encode('utf-8'),), output_file)
+
+
+def _write_atomic(chunks, output_file):
+    """Write byte ``chunks`` to a temporary file, then replace ``output_file``."""
     target = os.path.abspath(os.fspath(output_file))
     directory = os.path.dirname(target)
     basename = os.path.basename(target)
@@ -60,10 +83,8 @@ def write_json_minified(data, output_file):
     )
     try:
         os.fchmod(descriptor, 0o644)
-        encoder = json.JSONEncoder(ensure_ascii=False, separators=(',', ':'))
-        for chunk in encoder.iterencode(data):
-            _write_all(descriptor, chunk.encode('utf-8'))
-        _write_all(descriptor, b'\n')
+        for chunk in chunks:
+            _write_all(descriptor, chunk)
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = None

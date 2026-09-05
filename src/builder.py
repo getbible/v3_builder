@@ -22,8 +22,8 @@ from file_ops import clean_empty_files, move_public_hash_files
 from getbiblesword_converter import GetBibleSwordConverter
 from getbiblesword_reader import GetBibleSwordReader, materialize_sword_root
 from git_ops import GitRepository, push_all_repos
-from hasher import DEFAULT_API_BASE_URL, ContentHasher
-from openapi import describe_tree, mount_from_base_url
+from hasher import DEFAULT_API_BASE_URL, RESERVED_ROOT_NAMES, ContentHasher
+from openapi import describe_tree, mount_from_base_url, normalize_base_url
 from publication_policy import PublicationPolicy
 
 
@@ -101,9 +101,14 @@ class BuildPipeline:
             self._hash_path,
             config.repo_hash,
         )
+        self._api_base_url = None
 
     def run(self):
         start_time = time.time()
+        # The public base URL shapes every index url field and the tree
+        # description: an unusable value fails here, before any download,
+        # checkout, or hashing touches disk.
+        self._api_base_url = normalize_base_url(self._config.api_base_url)
         if not self._config.hash_only:
             try:
                 module_names = self._authorized_modules()
@@ -126,6 +131,12 @@ class BuildPipeline:
     def _authorized_modules(self):
         with open(self._config.bible_conf, "r", encoding="utf-8") as stream:
             module_map = json.load(stream)
+        reserved = sorted(set(module_map.values()) & RESERVED_ROOT_NAMES)
+        if reserved:
+            raise RuntimeError(
+                "module map uses reserved root document name(s) as abbreviation: "
+                + ", ".join(reserved)
+            )
         policy = PublicationPolicy.from_file(self._config.publication_policy)
         policy.require_approved(module_map)
         return list(module_map)
@@ -239,7 +250,7 @@ class BuildPipeline:
 
     def _hash(self):
         ContentHasher(
-            self._scripture_path, api_base_url=self._config.api_base_url
+            self._scripture_path, api_base_url=self._api_base_url
         ).hash_all()
 
     def _describe(self):
@@ -249,7 +260,7 @@ class BuildPipeline:
         )
         document = describe_tree(
             self._scripture_path,
-            mount=mount_from_base_url(self._config.api_base_url),
+            mount=mount_from_base_url(self._api_base_url),
             schema_dir=schema_dir,
         )
         log.info("Described the generated tree in %s", document)
@@ -308,8 +319,8 @@ def _parse_raw_args(argv=None):
     parser.add_argument(
         "--api-base-url", default=DEFAULT_API_BASE_URL,
         help=(
-            "public base URL recorded in the generated index files; "
-            "its path is the mount the generated openapi.json describes"
+            "public base URL recorded in the generated index files: a host plus "
+            "one version segment, which is the mount openapi.json describes"
         ),
     )
     parser.add_argument("--pull", action="store_true")

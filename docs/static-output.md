@@ -41,12 +41,12 @@ reading rules below. `openapi.sha` holds its SHA-1 like every other document's
 checksum, and both files are copied to the hash repository with the index files.
 
 The description names no host. Its paths start at the version segment of the
-builder's public base URL (`--api-base-url` or `getbible.api-base-url`; its
-path is `/v3` by default), the same URL the index files record in their `url`
-fields, so the tree and its description move together when the base URL
-changes. A base URL whose path does not end in a version segment fails the
-build before publication. Whoever mounts the tree under another prefix adds a
-`servers` entry of their own.
+builder's public base URL (`--api-base-url` or `getbible.api-base-url`), the
+same URL the index files record in their `url` fields, so the tree and its
+description move together when the base URL changes. The base URL must name
+a host and end in exactly one version segment, `/v3` by default; a trailing
+slash is dropped, and any other value fails the build before a module is
+downloaded.
 
 `schema/*.schema.json` is the source of truth for every document type:
 translation, book and chapter documents, the three index documents, the
@@ -164,7 +164,8 @@ to that book. A book title contains `text`, its OSIS `type` when supplied,
 optional `canonical` and `subtype` values, and title-local `tokens`/`spans` when
 word markup is available.
 
-Chapter and verse objects do not contain `titles`. Builder collects their OSIS
+Chapters with verses, and verse objects, do not contain `titles`. Builder
+collects their OSIS
 chapter titles, section headings, Psalm superscriptions, and other visible
 headings as transient conversion semantics, places them in chapter `editorial`
 with their verse anchors, then removes the duplicate title arrays before writing
@@ -203,7 +204,11 @@ This prevents silent semantic loss while keeping the generated documents small.
 
 - Scripture, token/span, introduction, and book-title fields are not retyped.
 - Chapter and verse `titles` are intentionally omitted in favor of their single,
-  position-aware `editorial` representation.
+  position-aware `editorial` representation; only a chapter without published
+  verses keeps its `titles`, nested in its book and translation documents.
+- A module map that abbreviates a translation with a reserved root document
+  name (`translations`, `checksum`, `books`, `chapters`, `openapi`) fails
+  before download.
 - Semantic fields are additive and deterministic.
 - No emitted verse `text` begins with a line-ending character.
 - `openapi.json` is generated from the hashed tree on every build, never

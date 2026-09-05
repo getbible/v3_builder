@@ -62,7 +62,7 @@ otherwise addressable verse.
 - Linux x86-64 or ARM64 for the published GetBibleSWORD release
 - Latest stable GetBibleSWORD release selected by the checked-in release policy
 - `requests` for legacy configuration helpers
-- `pytest` for tests
+- `pytest` and `jsonschema` for the unit tests
 
 PySword remains only in the legacy converter and historical unit comparisons. It
 is not installed or called by the native build pipeline.
@@ -120,7 +120,7 @@ Important native options:
 | `--sword-root` | Fresh explicit SWORD installation |
 | `--publication-policy` | Default-deny approval manifest |
 | `--bconf` | Requested SWORD-module-to-abbreviation map |
-| `--api-base-url` | Public base URL recorded in index `url` fields; its version segment mounts the tree description |
+| `--api-base-url` | Public base URL, a host plus one version segment, recorded in index `url` fields; that segment mounts the tree description |
 
 These can also be set in `conf/.config` as `getbible.getbiblesword`,
 `getbible.contracts`, `getbible.sword-root`, `getbible.publication-policy`,
@@ -171,8 +171,10 @@ and the JSON Schemas under `schema/`, which describe every document type the
 converter and hasher emit. It is an OpenAPI 3.1 document that names no host:
 its paths start at the version segment of `--api-base-url`, the same URL the
 index files record, and every schema is embedded so the description stands
-alone. A change to what a document holds is a change to its schema; the unit
-tests validate generated documents against the embedded schemas. See
+alone. The base URL must be a host plus exactly one version segment; anything
+else fails the build before a module is downloaded. A change to what a
+document holds is a change to its schema; the unit tests validate generated
+documents against the embedded schemas. See
 [`docs/static-output.md`](docs/static-output.md#tree-description).
 
 ## Publication authorization

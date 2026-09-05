@@ -19,7 +19,7 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
-from file_ops import write_json_minified
+from file_ops import write_json_minified, write_text_atomic
 
 OPENAPI_VERSION = "3.1.0"
 DOCUMENT_NAME = "openapi.json"
@@ -46,7 +46,9 @@ SCHEMA_NAMES = (
 )
 
 _TRANSLATION_PATTERN = "^[a-z0-9][a-z0-9_-]{0,29}$"
-_VERSION_SEGMENT = re.compile(r"^v[0-9]+$")
+# The tree is mounted at exactly one version segment, as the downstream
+# static endpoint serves it: /v3, never /prefix/v3.
+_VERSION_MOUNT = re.compile(r"^/v[0-9]+$")
 
 _DESCRIPTION = """\
 Static JSON documents of Bible translations, converted from CrossWire SWORD
@@ -69,7 +71,10 @@ carrying the same `url` and `sha` members, so nothing need be guessed.
 **Addressing.** `book` is the GetBible book number: Genesis is 1, Matthew 40,
 Revelation 66, and the deuterocanonical books continue to 83. `chapter` and
 `verse` are the numbers of the translation's own versification. Only books,
-chapters and verses that have text are published.
+chapters and verses that have text are published as documents. A chapter for
+which the source supplies an introduction but no verse text stays nested in
+its book and translation documents with an empty `verses` array and its
+`titles`, and has no document of its own.
 
 **Three self-similar levels.** A chapter document holds the verses of one
 chapter with the translation's metadata; a book document holds every chapter of
@@ -77,12 +82,14 @@ one book; the translation document holds every book. A chapter nested in a book
 or translation document carries the same members as the standalone chapter
 document after the shared metadata, so one reader serves all three levels.
 
-**Integrity.** Every JSON document has a `.sha` sibling holding the SHA-1 of
-its bytes as forty hexadecimal digits and a line feed, and each index document
-repeats that digest as `sha` beside the document's `url`. `checksum.json` at
-each level maps every document of that level to its digest, so a change
-anywhere is visible with one request per level. `openapi.json` is generated
-with the tree and has a `.sha` sibling of its own. The extension-less
+**Integrity.** Every translation, book and chapter document has a `.sha`
+sibling holding the SHA-1 of its bytes as forty hexadecimal digits and a line
+feed, and each index document repeats that digest as `sha` beside the
+document's `url`. `checksum.json` at each level maps every translation, book
+or chapter document of that level to its digest, so a change anywhere is
+visible with one request per level; the index and checksum documents
+themselves have no digest. `openapi.json` is generated with the tree and has
+a `.sha` sibling of its own. The extension-less
 tab-separated listings written beside the JSON indexes (`translations`,
 `books`, `chapters` and `checksum`) are text companions of the same data and
 are not described here.
@@ -104,8 +111,8 @@ order: headings anchored before a verse, with the source's title type and
 canonical flag, and paragraphs as inclusive verse ranges. When paragraph
 entries are present they cover every verse of the chapter contiguously. The
 same array appears in the standalone chapter document and in the chapter
-nested in the book and translation documents. Chapter and verse objects carry
-no `titles`; headings have that one representation.
+nested in the book and translation documents. A chapter with verses carries no
+`titles`, and verses never do; headings have that one representation.
 
 **Titles and introductions.** A translation or a book may carry `titles`, the
 title metadata belonging to it, and `introduction`, prose attached at that
@@ -128,30 +135,49 @@ _NOT_FOUND = {
 }
 
 
+def normalize_base_url(base_url: str) -> str:
+    """The public base URL the tree is built for, checked and normalized.
+
+    The URL must name a scheme and host and its path must be exactly one
+    version segment, such as ``https://example.test/v3``.  A trailing slash
+    is dropped so the index ``url`` fields and the description agree.
+    """
+
+    parts = urlsplit(base_url.strip())
+    path = parts.path.rstrip("/")
+    if (
+        parts.scheme not in {"http", "https"}
+        or not parts.netloc
+        or parts.query
+        or parts.fragment
+        or not _VERSION_MOUNT.match(path)
+    ):
+        raise ValueError(
+            "the public base URL must name a host and end in exactly one "
+            f"version segment, such as https://example.test/v3; got {base_url!r}"
+        )
+    return f"{parts.scheme}://{parts.netloc}{path}"
+
+
 def mount_from_base_url(base_url: str) -> str:
     """The path at which the tree is mounted, taken from its public base URL.
 
     ``https://example.test/v3`` and ``https://example.test/v3/`` both yield
-    ``/v3``; a base URL without a path yields the empty mount.
+    ``/v3``.
     """
 
-    parts = urlsplit(base_url)
-    path = parts.path.rstrip("/")
-    if path and not path.startswith("/"):
-        path = "/" + path
-    return path
+    return urlsplit(normalize_base_url(base_url)).path
 
 
 def version_label(mount: str) -> str:
-    """The version segment a mount ends in, such as ``v3``."""
+    """The version segment a mount consists of, such as ``v3``."""
 
-    label = mount.rstrip("/").rsplit("/", 1)[-1]
-    if not _VERSION_SEGMENT.match(label):
+    if not _VERSION_MOUNT.match(mount):
         raise ValueError(
-            "the generated tree must be described under a version segment "
-            f"such as /v3; the mount is {mount!r}"
+            "the generated tree must be described under exactly one version "
+            f"segment such as /v3; the mount is {mount!r}"
         )
-    return label
+    return mount[1:]
 
 
 def openapi_document(
@@ -210,8 +236,9 @@ def describe_tree(scripture_root: str, *, mount: str, schema_dir: str) -> str:
     with open(document_path, "rb") as stream:
         for chunk in iter(lambda: stream.read(8192), b""):
             digest.update(chunk)
-    with open(os.path.join(scripture_root, CHECKSUM_NAME), "w", encoding="utf-8") as stream:
-        stream.write(digest.hexdigest() + "\n")
+    write_text_atomic(
+        digest.hexdigest() + "\n", os.path.join(scripture_root, CHECKSUM_NAME)
+    )
     return document_path
 
 
@@ -470,6 +497,7 @@ __all__ = [
     "SCHEMA_NAMES",
     "describe_tree",
     "mount_from_base_url",
+    "normalize_base_url",
     "openapi_document",
     "version_label",
 ]

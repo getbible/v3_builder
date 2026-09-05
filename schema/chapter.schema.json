@@ -81,7 +81,7 @@
   "$defs": {
     "entry": {
       "title": "Chapter entry",
-      "description": "A chapter as nested in a book or translation document: the same members as the standalone chapter document after the shared metadata. A chapter for which the source supplied an introduction but no verse text is kept with an empty verses array, its titles, and no standalone document.",
+      "description": "A chapter as nested in a book or translation document: the same members as the standalone chapter document after the shared metadata. A chapter for which the source supplied an introduction but no verse text is kept with an empty verses array and its titles, and has no standalone document; a chapter with verses carries its headings in editorial and never in titles.",
       "type": "object",
       "properties": {
         "chapter": {
@@ -120,7 +120,28 @@
         "name",
         "verses"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "verses": {
+            "minItems": 1
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "titles"
+          ]
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "editorial"
+          ]
+        }
+      }
     }
   }
 }

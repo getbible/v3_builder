@@ -145,3 +145,10 @@ def test_preview_workflow_does_not_retain_contract_artifacts():
     assert "Upload lossless NDJSON contracts" not in workflow
     assert "name: getbiblesword-contracts" not in workflow
     assert "Discard transient module and extraction data" in workflow
+
+
+def test_preview_workflow_rebuilds_when_the_document_schemas_change():
+    workflow = PREVIEW_WORKFLOW.read_text(encoding="utf-8")
+
+    assert '- "schema/**"' in workflow
+    assert '- "src/**"' in workflow

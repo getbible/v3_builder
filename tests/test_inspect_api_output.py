@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 
 from openapi import describe_tree
+from openapi import SCHEMA_NAMES
 from scripts.inspect_api_output import (
+    OPENAPI_SCHEMAS,
     InspectionError,
     TARGET_BOOKS,
     TARGET_CHAPTERS,
@@ -338,4 +340,48 @@ def test_inspection_fails_when_a_schema_is_not_embedded(generated_kjv):
     )
 
     with pytest.raises(InspectionError, match="embeds no schema for: verse"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_the_inspection_expects_every_published_schema():
+    assert OPENAPI_SCHEMAS == set(SCHEMA_NAMES)
+
+
+def test_inspection_fails_when_the_description_checksum_is_missing(generated_kjv):
+    scripture, hashes = generated_kjv
+    (scripture / "openapi.sha").unlink()
+
+    with pytest.raises(InspectionError, match="required checksum is missing"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda document: document.update(openapi="3.0.3"), "not an OpenAPI 3.1.0"),
+        (
+            lambda document: document["info"].update(description="see https://example.test"),
+            "names a server or host",
+        ),
+        (lambda document: document.update(paths={}), "describes no paths"),
+        (
+            lambda document: document.update(
+                paths={route.replace("/v3/", "/api/", 1): item for route, item in document["paths"].items()}
+            ),
+            "version segment",
+        ),
+        (lambda document: document.pop("components"), "has no components"),
+        (
+            lambda document: document["components"]["parameters"]["translation"]["schema"].pop("enum"),
+            "does not list the kjv translation",
+        ),
+        (lambda document: document["components"].update(schemas=[]), "embeds no schema for"),
+    ],
+    ids=["version", "host", "no-paths", "mount", "components", "enum", "schemas"],
+)
+def test_inspection_rejects_a_description_that_does_not_fit(generated_kjv, mutate, message):
+    scripture, hashes = generated_kjv
+    _rewrite_openapi(scripture, mutate)
+
+    with pytest.raises(InspectionError, match=message):
         inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
