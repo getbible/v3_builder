@@ -20,9 +20,11 @@ explicit and both projects can release and test independently.
    LF framing, byte envelopes, artifact groups, counts, diagnostics, successful
    footer, and exact stream SHA-256.
 7. Python streams the validated entries into compact translation, book, chapter,
-   and verse JSON. It retains text, complete token/span data, paragraph markers,
-   book titles, chapter-level `editorial`, and introduction semantics—not
-   extraction envelopes or duplicate chapter/verse title arrays.
+   and verse JSON. Every book the module has is filed under its number from
+   `conf/bookNumbers.json`; an unknown book name fails the module rather than
+   guessing a number. It retains text, complete token/span data, paragraph
+   markers, book titles, chapter-level `editorial`, and introduction
+   semantics—not extraction envelopes or duplicate chapter/verse title arrays.
 8. The module ZIPs, SWORD root, and contracts are discarded after the build
    attempt, including a failed conversion.
 9. Generated Scripture files pass hard-size and filesystem safety gates before

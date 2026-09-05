@@ -334,6 +334,7 @@ class GetBibleSwordConverter:
         output_root = Path(self._output_path)
         output_root.mkdir(parents=True, exist_ok=True)
         for book_number, book in books.items():
+            book.pop("_sword_name", None)
             chapters = list(book.pop("_chapters").values())
             if not any(chapter["verses"] for chapter in chapters):
                 continue
@@ -490,18 +491,23 @@ class GetBibleSwordConverter:
         abbreviation: str,
     ) -> dict[str, Any]:
         sword_name = _text(scope.get("book_name"), "entry.scope.book_name")
+        # Book numbers are the one stable address every translation shares,
+        # so they come from the checked-in table alone.  A name the table does
+        # not know fails the module: a guessed number would file the book under
+        # another book's address and merge their verses.
         book_number = self._config.book_numbers.get(sword_name)
         if book_number is None:
-            testament = scope.get("testament")
-            testament_book = scope.get("book")
-            if testament == 1 and isinstance(testament_book, int):
-                book_number = testament_book
-            elif testament == 2 and isinstance(testament_book, int):
-                book_number = 39 + testament_book
-            else:
-                raise ConversionError(
-                    f"unknown SWORD book name {sword_name!r}"
-                )
+            raise ConversionError(
+                f"unknown SWORD book name {sword_name!r}; add it to "
+                "conf/bookNumbers.json before this module can be published"
+            )
+        claimed = books.get(book_number)
+        if claimed is not None and claimed["_sword_name"] != sword_name:
+            raise ConversionError(
+                f"SWORD books {claimed['_sword_name']!r} and {sword_name!r} both "
+                f"map to book number {book_number}; conf/bookNumbers.json must "
+                "give each book of a module its own number"
+            )
         if book_number not in books:
             default_name = self._config.book_names.get(sword_name, sword_name)
             display_name = self._resolve_book_name(
@@ -514,6 +520,7 @@ class GetBibleSwordConverter:
             books[book_number] = {
                 "nr": book_number,
                 "name": display_name,
+                "_sword_name": sword_name,
                 "_chapters": OrderedDict(),
             }
         return books[book_number]

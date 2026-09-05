@@ -29,6 +29,8 @@ official SWORD engine through the separately released
   legacy Windows-1252/Latin-1 bytes are converted instead of rejecting the catalog.
 - Treats module ZIPs, the SWORD installation, and lossless contracts as transient
   working data and discards them after every build.
+- Publishes every book a module has under its number from `conf/bookNumbers.json`,
+  which now reaches 89, and fails a module whose book the table does not know.
 - Applies a default-deny publication policy before a module can enter a build.
 - Keeps C++ extraction and Python JSON generation as independently releasable and
   testable projects.

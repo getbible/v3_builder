@@ -2,6 +2,7 @@ import base64
 import gc
 import hashlib
 import json
+import os
 import weakref
 from types import SimpleNamespace
 
@@ -648,3 +649,121 @@ def test_native_converter_releases_each_contract_entry_while_streaming(
         verse["text"]
         for verse in document["books"][0]["chapters"][0]["verses"]
     ] == ["One", "Two"]
+
+
+REPOSITORY_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _module_records(entries):
+    return [
+        {
+            "type": "header", "command": "extract",
+            "contract": "getbiblesword.ndjson/v1", "contract_version": 1,
+            "producer": "getBibleSword", "producer_version": "0.1.0",
+            "sword_version": "1.9.0",
+        },
+        {
+            "type": "module", "classification": "bible",
+            "name": bv("LXX"), "description": bv("Septuagint"),
+            "language": bv("grc"), "driver": bv("zText"),
+            "sword_type": bv("Biblical Texts"),
+            "direction": {"code": 0, "name": "ltr"},
+            "encoding": {"code": 2, "name": "utf8"},
+            "markup": bv("osis") and {"code": 7, "name": "osis"},
+        },
+        {"type": "config_entry", "ordinal": 0, "name": bv("Lang"), "value": bv("grc")},
+        *entries,
+    ]
+
+
+def _verse_in(book_name, ordinal, chapter, verse, text, testament=1, book_index=1):
+    record = entry(ordinal, chapter, verse, "verse", text, text)
+    record["scope"]["book_name"] = bv(book_name)
+    record["scope"]["book_abbreviation"] = bv(book_name[:3])
+    record["scope"]["testament"] = testament
+    record["scope"]["book"] = book_index
+    record["key"] = bv(f"{book_name} {chapter}:{verse}")
+    return record
+
+
+def _convert(tmp_path, config, entries):
+    contract = tmp_path / "LXX.ndjson"
+    write_records(contract, _module_records(entries))
+    output = tmp_path / "output"
+    result = GetBibleSwordConverter(config, str(output)).convert(str(contract), module_name="LXX")
+    return json.loads(open(result, encoding="utf-8").read()), output
+
+
+def _config(**book_numbers):
+    return ConversionConfig(
+        translation_names={"LXX": "lxx"},
+        v1_translations={},
+        book_numbers=book_numbers,
+        book_names={},
+        lang_correction={},
+        language_names={"grc": "Greek"},
+        text_direction={},
+    )
+
+
+def test_every_book_is_filed_under_its_number_from_the_table(tmp_path):
+    document, output = _convert(
+        tmp_path,
+        _config(**{"Micah": 33, "Odes": 86}),
+        [
+            _verse_in("Odes", 0, 1, 1, "Let us sing to the Lord", book_index=57),
+            _verse_in("Micah", 1, 1, 1, "The word of the Lord to Micah", book_index=33),
+        ],
+    )
+
+    assert [(book["nr"], book["name"]) for book in document["books"]] == [
+        (86, "Odes"), (33, "Micah"),
+    ]
+    assert (output / "lxx" / "86" / "1.json").exists()
+    assert (output / "lxx" / "33" / "1.json").exists()
+    assert "_sword_name" not in document["books"][0]
+
+
+def test_an_unknown_book_name_fails_instead_of_guessing_a_number(tmp_path):
+    with pytest.raises(ConversionError, match="unknown SWORD book name 'Odes'.*bookNumbers.json"):
+        _convert(
+            tmp_path,
+            _config(**{"Micah": 33}),
+            [_verse_in("Odes", 0, 1, 1, "Let us sing to the Lord", book_index=57)],
+        )
+
+
+def test_two_books_sharing_a_number_fail_instead_of_merging(tmp_path):
+    with pytest.raises(ConversionError, match="'Psalms of Solomon' and 'Micah' both map to book number 33"):
+        _convert(
+            tmp_path,
+            _config(**{"Micah": 33, "Psalms of Solomon": 33}),
+            [
+                _verse_in("Psalms of Solomon", 0, 1, 1, "I cried to the Lord", book_index=33),
+                _verse_in("Micah", 1, 1, 1, "The word of the Lord to Micah", book_index=34),
+            ],
+        )
+
+
+def test_the_checked_in_table_numbers_the_additional_books(tmp_path):
+    config = ConversionConfig.from_files(
+        os.path.join(REPOSITORY_ROOT, "conf"),
+        os.path.join(REPOSITORY_ROOT, "conf", "CrosswireModulesMapTest.json"),
+    )
+    config.translation_names["LXX"] = "lxx"
+    names = [
+        "Epistle of Jeremiah", "Psalms of Solomon", "Odes", "1 Enoch",
+        "Additions to Daniel", "Laodiceans",
+    ]
+    entries = [
+        _verse_in(name, index, 1, 1, f"Text of {name}", book_index=50 + index)
+        for index, name in enumerate(names)
+    ]
+
+    document, output = _convert(tmp_path, config, entries)
+
+    assert [(book["nr"], book["name"]) for book in document["books"]] == [
+        (84, "Epistle of Jeremiah"), (85, "Psalms of Solomon"), (86, "Odes"),
+        (87, "1 Enoch"), (88, "Additions to Daniel"), (89, "Laodiceans"),
+    ]
+    assert sorted(int(path.name) for path in (output / "lxx").iterdir() if path.is_dir()) == list(range(84, 90))

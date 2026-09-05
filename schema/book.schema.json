@@ -33,8 +33,8 @@
     "nr": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 83,
-      "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical books continue to 83."
+      "maximum": 89,
+      "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical and other additional books continue to 89."
     },
     "name": {
       "type": "string",
@@ -81,8 +81,8 @@
         "nr": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 83,
-          "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical books continue to 83."
+          "maximum": 89,
+          "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical and other additional books continue to 89."
         },
         "name": {
           "type": "string",

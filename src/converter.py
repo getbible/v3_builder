@@ -159,6 +159,11 @@ class SwordModuleConverter:
 
         for book_idx, book in enumerate(books, 1):
             book_nr = self._config.book_numbers.get(book.name)
+            if book_nr is None:
+                raise ValueError(
+                    f'unknown SWORD book name {book.name!r}; add it to '
+                    'conf/bookNumbers.json before this module can be published'
+                )
             book_name = self._resolve_book_name(
                 book_nr,
                 self._config.book_names.get(book.name, book.name),

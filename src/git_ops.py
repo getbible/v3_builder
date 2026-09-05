@@ -123,7 +123,9 @@ class GitRepository:
         """Prepare the repository for a fresh build.
 
         If the repo doesn't exist:
-        - Clone from remote URL if pull=True
+        - Clone from remote URL if pull=True, then reset it like an existing
+          checkout, so files an earlier build published but this build no
+          longer generates are removed rather than carried forward
         - Otherwise create the directory
 
         If the repo exists with .git:
@@ -142,17 +144,20 @@ class GitRepository:
         if not self.exists:
             if pull and self._repo_url:
                 log.info('Cloning %s into %s', self._repo_url, self._path)
-                self._run(['clone', '--depth', '1', self._repo_url, self._path])
+                rc, _, stderr = self._run(
+                    ['clone', '--depth', '1', self._repo_url, self._path]
+                )
+                if rc != 0:
+                    raise GitOperationError('clone', self._path, stderr)
             else:
                 os.makedirs(self._path, exist_ok=True)
                 log.info('Created directory %s', self._path)
-            return
+                return
+        elif self.has_git and pull:
+            log.info('Pulling latest changes in %s', self._path)
+            self._run(['pull'], cwd=self._path)
 
         if self.has_git:
-            if pull:
-                log.info('Pulling latest changes in %s', self._path)
-                self._run(['pull'], cwd=self._path)
-
             tmp_path = self._path + '_tmp'
             os.makedirs(tmp_path, exist_ok=True)
 

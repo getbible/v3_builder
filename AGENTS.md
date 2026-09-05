@@ -12,6 +12,9 @@ Non-negotiable invariants:
   conversion until an explicit semantic mapping exists.
 - Never replace raw entry bytes with rendered or stripped projections.
 - Keep publication default-deny; a module map edit is not publication approval.
+- Publish every book a module has under its number from `conf/bookNumbers.json`;
+  an unknown SWORD book name fails conversion. Never guess a number from a
+  testament index and never let two books of one module share a number.
 - Keep `conf/GetBibleSwordRelease.json` as the single default release authority;
   never duplicate a getBibleSWORD version in a workflow.
 - Do not create symlinks while installing ZIPs or reassembling artifacts.
