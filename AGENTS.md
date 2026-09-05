@@ -30,3 +30,11 @@ Run `python -m pytest tests/ -v` for unit changes. Native integration changes al
 require the integration workflow with the latest stable release and real test
 modules. Record the exact resolved release for every build. Do not promote the
 pipeline to production without satisfying the gates in the pipeline document.
+
+## Commits
+
+Commits in this repository are authored in the maintainer's name: the owner of
+the GitHub connector that pushes them. Do not add a `Co-Authored-By` trailer, a
+session link, an assistant name, or any other tool attribution to a commit
+message, tag, or pull request. A commit that carries another author is rewritten
+and force-pushed on the branch it was created on.
