@@ -546,6 +546,36 @@ def _chapter_summary(
     return summary, representative
 
 
+def _require_checksum_siblings(root: Path) -> dict[str, Any]:
+    """Every JSON document must have a .sha sibling holding its SHA-1.
+
+    Readers detect a changed document through that small sibling, so an index
+    or checksum document without one cannot be watched for changes.
+    """
+
+    documents = 0
+    problems: list[str] = []
+    for path in sorted(root.rglob("*.json")):
+        if not path.is_file():
+            continue
+        documents += 1
+        sibling = path.with_suffix(".sha")
+        try:
+            expected = sibling.read_text(encoding="utf-8")
+        except OSError:
+            problems.append(f"{path.relative_to(root).as_posix()}: no .sha sibling")
+            continue
+        if expected != hashlib.sha1(path.read_bytes()).hexdigest() + "\n":
+            problems.append(f"{path.relative_to(root).as_posix()}: .sha does not match")
+        if len(problems) >= 20:
+            break
+    if problems:
+        raise InspectionError(
+            "JSON documents without a matching .sha sibling: " + "; ".join(problems)
+        )
+    return {"json_documents": documents, "checksum_siblings": documents}
+
+
 def _validate_openapi(root: Path, abbreviation: str) -> dict[str, Any]:
     """Check that the generated description is true of the tree it sits in.
 
@@ -650,6 +680,7 @@ def inspect_api(
         size_limit_bytes=size_limit_bytes,
     )
     openapi_summary = _validate_openapi(root, abbreviation)
+    checksum_summary = _require_checksum_siblings(root)
     translation_path = root / f"{abbreviation}.json"
     translation = _json(translation_path)
     _require_no_source_envelopes(translation, str(translation_path))
@@ -694,6 +725,7 @@ def inspect_api(
         "inspection": "getbible-kjv-api/v1",
         "abbreviation": abbreviation,
         "translation_fields": sorted(translation),
+        "checksums": checksum_summary,
         "openapi": openapi_summary,
         "size_report": size_report,
         "books": books_output,
@@ -705,6 +737,8 @@ def _print_inspection(result: dict[str, Any]) -> None:
     print("============================")
     print(f"Inspection contract: {result['inspection']}")
     print(f"Translation fields: {', '.join(result['translation_fields'])}")
+    print("\nCHECKSUM SIBLINGS")
+    print(json.dumps(result["checksums"], ensure_ascii=False, indent=2, sort_keys=True))
     print("\nGENERATED TREE DESCRIPTION")
     print(json.dumps(result["openapi"], ensure_ascii=False, indent=2, sort_keys=True))
     print("\nGENERATED API SIZE REPORT")
@@ -729,8 +763,9 @@ def _print_inspection(result: dict[str, Any]) -> None:
     print(
         "All requested books and chapters are present, no source envelopes remain, "
         "verse text has no leading line endings, KJV token/span and editorial "
-        "fields are structurally valid, openapi.json describes the tree it sits "
-        "in, and every generated API file is below the size ceiling."
+        "fields are structurally valid, every JSON document has a matching .sha "
+        "sibling, openapi.json describes the tree it sits in, and every generated "
+        "API file is below the size ceiling."
     )
 
 

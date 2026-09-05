@@ -16,14 +16,21 @@ The generated tree keeps its established layout:
 translations.json
 <abbreviation>/books.json
 <abbreviation>/<book-number>/chapters.json
-checksum.json and matching .sha/checksum files
-openapi.json and openapi.sha
+checksum.json at every level, and the checksum/translations/books/chapters listings
+openapi.json
+a .sha sibling beside every one of the JSON documents above
 ```
 
 The translation document contains the language, direction, encoding,
 distribution metadata, and its complete book/chapter/verse hierarchy. Book and
 chapter documents repeat the stable translation metadata needed when those files
 are read on their own.
+
+Every JSON document, the index and checksum documents and `openapi.json`
+included, has a `.sha` sibling holding the SHA-1 of its bytes as forty
+hexadecimal digits and a line feed. A reader watches a document for changes
+through that small sibling, so no JSON document is written without one; the
+KJV inspection fails on any that lacks or mismatches it.
 
 A chapter for which the source supplies an introduction but no verse text stays
 nested in its book and translation documents with an empty `verses` array and
@@ -211,6 +218,7 @@ This prevents silent semantic loss while keeping the generated documents small.
   before download.
 - Semantic fields are additive and deterministic.
 - No emitted verse `text` begins with a line-ending character.
+- Every JSON document has a `.sha` sibling holding the SHA-1 of its bytes.
 - `openapi.json` is generated from the hashed tree on every build, never
   hand-edited, and the hasher never treats it as a translation.
 - Valid upstream content growth is accepted without comparison to an older build.

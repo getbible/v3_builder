@@ -7,7 +7,8 @@ Generates SHA1 checksums and metadata files at three levels:
 - Chapters (chapter-level within each book)
 
 Each level produces:
-- .sha files (single-line SHA1 hash per JSON file)
+- .sha files: a single-line SHA1 sibling for every JSON document, the
+  index and checksum documents included
 - checksum (tab-delimited text listing)
 - checksum.json (JSON mapping of key → SHA1 hash)
 - Detail files (translations.json / books.json / chapters.json)
@@ -19,7 +20,7 @@ import json
 import logging
 import os
 
-from file_ops import write_json_minified
+from file_ops import write_json_minified, write_text_atomic
 
 log = logging.getLogger(__name__)
 
@@ -103,8 +104,10 @@ class ContentHasher:
 
         self._write_text(os.path.join(self._folder, 'translations'), translations_text)
         self._write_text(os.path.join(self._folder, 'checksum'), checksum_text)
-        self._write_json(checksum_json, os.path.join(self._folder, 'checksum.json'))
-        self._write_json(translations_json, os.path.join(self._folder, 'translations.json'))
+        self._write_json_with_checksum(checksum_json, os.path.join(self._folder, 'checksum.json'))
+        self._write_json_with_checksum(
+            translations_json, os.path.join(self._folder, 'translations.json')
+        )
 
         log.info('Done hashing %d versions', nr)
         return checksum_json
@@ -166,8 +169,8 @@ class ContentHasher:
 
             self._write_text(os.path.join(abbr_dir, 'checksum'), checksum_text)
             self._write_text(os.path.join(abbr_dir, 'books'), books_text)
-            self._write_json(checksum_json, os.path.join(abbr_dir, 'checksum.json'))
-            self._write_json(books_json, os.path.join(abbr_dir, 'books.json'))
+            self._write_json_with_checksum(checksum_json, os.path.join(abbr_dir, 'checksum.json'))
+            self._write_json_with_checksum(books_json, os.path.join(abbr_dir, 'books.json'))
 
             all_hashes[abbreviation] = checksum_json
             log.info('Hashed %d books for %s', len(checksum_json), abbreviation)
@@ -254,8 +257,8 @@ class ContentHasher:
 
                 self._write_text(os.path.join(book_dir, 'checksum'), checksum_text)
                 self._write_text(os.path.join(book_dir, 'chapters'), chapters_text)
-                self._write_json(checksum_json, os.path.join(book_dir, 'checksum.json'))
-                self._write_json(chapters_json, os.path.join(book_dir, 'chapters.json'))
+                self._write_json_with_checksum(checksum_json, os.path.join(book_dir, 'checksum.json'))
+                self._write_json_with_checksum(chapters_json, os.path.join(book_dir, 'chapters.json'))
 
                 abbr_hashes[nr] = checksum_json
 
@@ -289,6 +292,19 @@ class ContentHasher:
         """
         write_json_minified(data, path)
 
+    @classmethod
+    def _write_json_with_checksum(cls, data, path):
+        """Write an index document and the .sha sibling every JSON document carries.
+
+        Consumers detect a changed document through its .sha sibling, which a
+        static server can cache for a short time; the index and checksum
+        documents get one exactly like the translation, book and chapter
+        documents.
+        """
+        cls._write_json(data, path)
+        root, _ = os.path.splitext(path)
+        cls._write_text(root + '.sha', _sha1_file(path) + '\n')
+
     @staticmethod
     def _reformat_json(path):
         with open(path, 'r', encoding='utf-8') as f:
@@ -298,8 +314,8 @@ class ContentHasher:
 
     @staticmethod
     def _write_text(path, content):
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(content)
+        """Write a checksum or listing file atomically, like every document."""
+        write_text_atomic(content, path)
 
 
 def _sha1_file(path):

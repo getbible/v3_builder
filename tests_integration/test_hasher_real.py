@@ -159,6 +159,13 @@ def _validate_tree_against_description(output_dir, document, abbreviations):
         ):
             with open(os.path.join(output_dir, relative), "r", encoding="utf-8") as stream:
                 check("checksum", stream.read(), relative)
+    # Every JSON document, the indexes and the description included, has a
+    # .sha sibling: the runtime endpoints require one for every file they read.
+    for directory, _, names in os.walk(output_dir):
+        for name in names:
+            if name.endswith(".json"):
+                sibling = os.path.join(directory, name[:-5] + ".sha")
+                assert os.path.isfile(sibling), f"{os.path.join(directory, name)} has no .sha sibling"
 
 
 class TestTreeDescription:

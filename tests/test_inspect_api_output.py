@@ -20,8 +20,12 @@ SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schema"
 
 
 def _write_json(path: Path, value) -> None:
+    """Write a document and the .sha sibling every JSON document carries."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, separators=(",", ":")) + "\n", encoding="utf-8")
+    path.with_suffix(".sha").write_text(
+        hashlib.sha1(path.read_bytes()).hexdigest() + "\n", encoding="utf-8"
+    )
 
 
 @pytest.fixture
@@ -142,10 +146,12 @@ def test_inspection_reports_all_requested_chapters_and_semantics(generated_kjv):
     }
     assert first["paragraph_boundaries"]
     assert first["headings_or_titles"]
-    assert result["size_report"]["file_count"] == 20
+    scripture_files = [path for path in scripture.rglob("*") if path.is_file()]
+    assert result["size_report"]["file_count"] == len(scripture_files) + 1
+    assert result["checksums"] == {"json_documents": 18, "checksum_siblings": 18}
     assert result["openapi"]["mount"] == "/v3"
     assert result["openapi"]["translations"] == ["kjv"]
-    assert result["openapi"]["path_count"] == 14
+    assert result["openapi"]["path_count"] == 20
     assert "chapter" in result["openapi"]["schemas"]
 
 
@@ -384,4 +390,20 @@ def test_inspection_rejects_a_description_that_does_not_fit(generated_kjv, mutat
     _rewrite_openapi(scripture, mutate)
 
     with pytest.raises(InspectionError, match=message):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_inspection_fails_when_a_json_document_has_no_sha_sibling(generated_kjv):
+    scripture, hashes = generated_kjv
+    (scripture / "kjv" / "19" / "2.sha").unlink()
+
+    with pytest.raises(InspectionError, match="kjv/19/2.json: no .sha sibling"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_inspection_fails_when_a_sha_sibling_is_stale(generated_kjv):
+    scripture, hashes = generated_kjv
+    (scripture / "translations.sha").write_text("0" * 40 + "\n", encoding="utf-8")
+
+    with pytest.raises(InspectionError, match="translations.json: .sha does not match"):
         inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)

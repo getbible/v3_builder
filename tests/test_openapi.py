@@ -28,17 +28,23 @@ SCHEMA_DIR = REPOSITORY_ROOT / "schema"
 
 EXPECTED_PATHS = [
     "/v3/translations.json",
+    "/v3/translations.sha",
     "/v3/checksum.json",
+    "/v3/checksum.sha",
     "/v3/openapi.json",
     "/v3/openapi.sha",
     "/v3/{translation}.json",
     "/v3/{translation}.sha",
     "/v3/{translation}/books.json",
+    "/v3/{translation}/books.sha",
     "/v3/{translation}/checksum.json",
+    "/v3/{translation}/checksum.sha",
     "/v3/{translation}/{book}.json",
     "/v3/{translation}/{book}.sha",
     "/v3/{translation}/{book}/chapters.json",
+    "/v3/{translation}/{book}/chapters.sha",
     "/v3/{translation}/{book}/checksum.json",
+    "/v3/{translation}/{book}/checksum.sha",
     "/v3/{translation}/{book}/{chapter}.json",
     "/v3/{translation}/{book}/{chapter}.sha",
 ]
@@ -259,8 +265,7 @@ def test_schema_references_are_rewritten_into_the_description():
 
 def test_the_prose_states_what_the_tree_actually_guarantees():
     description = openapi_document(["kjv"], mount="/v3", schema_dir=str(SCHEMA_DIR))["info"]["description"]
-    assert "Every translation, book and chapter document has a `.sha`" in description
-    assert "index and checksum documents\nthemselves have no digest" in description
+    assert "Every JSON document, the index and checksum documents and this\ndescription included, has a `.sha`" in description
     assert "has no document of its own" in description
     assert "A chapter with verses carries no\n`titles`" in description
 
@@ -412,6 +417,13 @@ def test_generated_documents_validate_against_the_embedded_schemas(described_tre
     assert checksums
     for path in checksums:
         _validate(document, "checksum", path.read_text(encoding="utf-8"))
+    # Every JSON document, the indexes and the description included, has one.
+    documents = sorted(output.rglob("*.json"))
+    assert [path.with_suffix(".sha") for path in documents] == checksums
+    for path in documents:
+        assert path.with_suffix(".sha").read_text(encoding="utf-8") == (
+            hashlib.sha1(path.read_bytes()).hexdigest() + "\n"
+        )
 
 
 def test_the_embedded_schemas_reject_documents_outside_the_contract(described_tree):

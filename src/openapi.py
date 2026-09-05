@@ -82,14 +82,14 @@ one book; the translation document holds every book. A chapter nested in a book
 or translation document carries the same members as the standalone chapter
 document after the shared metadata, so one reader serves all three levels.
 
-**Integrity.** Every translation, book and chapter document has a `.sha`
-sibling holding the SHA-1 of its bytes as forty hexadecimal digits and a line
-feed, and each index document repeats that digest as `sha` beside the
-document's `url`. `checksum.json` at each level maps every translation, book
-or chapter document of that level to its digest, so a change anywhere is
-visible with one request per level; the index and checksum documents
-themselves have no digest. `openapi.json` is generated with the tree and has
-a `.sha` sibling of its own. The extension-less
+**Integrity.** Every JSON document, the index and checksum documents and this
+description included, has a `.sha` sibling holding the SHA-1 of its bytes as
+forty hexadecimal digits and a line feed, so a reader can detect a change to
+any document by fetching its small sibling. Each index document also repeats
+the digest of every document it lists as `sha` beside that document's `url`,
+and `checksum.json` at each level maps every translation, book or chapter
+document of that level to its digest, so a change anywhere is visible with
+one request per level. The extension-less
 tab-separated listings written beside the JSON indexes (`translations`,
 `books`, `chapters` and `checksum`) are text companions of the same data and
 are not described here.
@@ -297,12 +297,18 @@ def _tree_paths(mount: str) -> dict[str, Any]:
             "its document was built for and the SHA-1 of that document.",
             _ref("translations-index"),
         ),
+        f"{mount}/translations.sha": _checksum_operation(
+            "getTranslationsChecksum", "tree", "the translation index",
+        ),
         f"{mount}/checksum.json": _operation(
             "getTranslationChecksums",
             "tree",
             "The SHA-1 of every translation document",
             "Every translation's abbreviation mapped to the SHA-1 of its document.",
             _ref("checksum-index"),
+        ),
+        f"{mount}/checksum.sha": _checksum_operation(
+            "getTranslationChecksumsChecksum", "tree", "the translation checksum index",
         ),
         f"{mount}/openapi.json": _operation(
             "getOpenApi",
@@ -343,12 +349,19 @@ def _translation_paths(mount: str) -> dict[str, Any]:
             _ref("books-index"),
             ("translation",),
         ),
+        f"{mount}/{{translation}}/books.sha": _checksum_operation(
+            "getBooksChecksum", "translation", "the book index", ("translation",),
+        ),
         f"{mount}/{{translation}}/checksum.json": _operation(
             "getBookChecksums",
             "translation",
             "The SHA-1 of every book document of one translation",
             "Every book number mapped to the SHA-1 of its document.",
             _ref("checksum-index"),
+            ("translation",),
+        ),
+        f"{mount}/{{translation}}/checksum.sha": _checksum_operation(
+            "getBookChecksumsChecksum", "translation", "the book checksum index",
             ("translation",),
         ),
     }
@@ -378,12 +391,19 @@ def _book_paths(mount: str) -> dict[str, Any]:
             _ref("chapters-index"),
             ("translation", "book"),
         ),
+        f"{mount}/{{translation}}/{{book}}/chapters.sha": _checksum_operation(
+            "getChaptersChecksum", "book", "the chapter index", ("translation", "book"),
+        ),
         f"{mount}/{{translation}}/{{book}}/checksum.json": _operation(
             "getChapterChecksums",
             "book",
             "The SHA-1 of every chapter document of one book",
             "Every chapter number mapped to the SHA-1 of its document.",
             _ref("checksum-index"),
+            ("translation", "book"),
+        ),
+        f"{mount}/{{translation}}/{{book}}/checksum.sha": _checksum_operation(
+            "getChapterChecksumsChecksum", "book", "the chapter checksum index",
             ("translation", "book"),
         ),
     }
