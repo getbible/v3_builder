@@ -43,7 +43,15 @@ def getbiblesword_executable():
     configured = os.environ.get("GETBIBLESWORD_BIN", "getbiblesword")
     executable = configured if os.path.sep in configured else shutil.which(configured)
     if not executable or not os.path.isfile(executable):
-        pytest.skip("GETBIBLESWORD_BIN is required for native integration tests")
+        pytest.fail(
+            "Native integration was requested but GETBIBLESWORD_BIN does not "
+            f"identify an installed executable: {configured!r}",
+            pytrace=False,
+        )
+    if not os.access(executable, os.X_OK):
+        pytest.fail(
+            f"GETBIBLESWORD_BIN is not executable: {executable!r}", pytrace=False
+        )
     return executable
 
 

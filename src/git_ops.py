@@ -155,7 +155,9 @@ class GitRepository:
                 return
         elif self.has_git and pull:
             log.info('Pulling latest changes in %s', self._path)
-            self._run(['pull'], cwd=self._path)
+            rc, _, stderr = self._run(['pull'], cwd=self._path)
+            if rc != 0:
+                raise GitOperationError('pull', self._path, stderr)
 
         if self.has_git:
             tmp_path = self._path + '_tmp'

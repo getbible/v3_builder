@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -20,9 +21,11 @@ import stat
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
+from email.utils import parsedate_to_datetime
 from pathlib import Path, PurePosixPath
 
 
@@ -34,10 +37,17 @@ _VERSION_PATTERN = re.compile(
     r"^v?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)$"
 )
 _REPOSITORY_PATTERN = re.compile(r"^[0-9A-Za-z_.-]+/[0-9A-Za-z_.-]+$")
+_DOWNLOAD_ATTEMPTS = 4
+_RETRYABLE_HTTP_STATUSES = {408, 429, 500, 502, 503, 504}
+_MAX_RETRY_DELAY = 60
 
 
 class InstallError(RuntimeError):
     pass
+
+
+class DownloadError(InstallError):
+    """A transient transport failure that persisted through bounded retries."""
 
 
 @dataclass(frozen=True)
@@ -62,17 +72,64 @@ class InstalledRelease:
     executable: str
 
 
+def _retry_delay(attempt: int, retry_after: str | None) -> float:
+    delay = 2 ** (attempt - 1)
+    if retry_after is not None:
+        try:
+            delay = max(delay, int(retry_after))
+        except ValueError:
+            try:
+                delay = max(delay, parsedate_to_datetime(retry_after).timestamp() - time.time())
+            except (ValueError, TypeError, OverflowError):
+                pass
+    return min(delay, _MAX_RETRY_DELAY)
+
+
 def _request(url: str, *, accept: str) -> bytes:
+    """Retry the same resource without changing the resolved release.
+
+    The whole response must arrive before it is returned. A failed or truncated
+    transfer is discarded, and integrity checks remain the caller's obligation.
+    """
     headers = {
         "Accept": accept,
         "User-Agent": "getbible-v3-builder",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120) as response:
-            return response.read()
-    except urllib.error.HTTPError as exc:
-        raise InstallError(f"GitHub returned HTTP {exc.code} for {url}") from exc
+    for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+        retry_after = None
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(url, headers=headers), timeout=120
+            ) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            exc.close()
+            if exc.code not in _RETRYABLE_HTTP_STATUSES:
+                raise InstallError(f"GitHub returned HTTP {exc.code} for {url}") from exc
+            failure = exc
+            detail = f"HTTP {exc.code}"
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.IncompleteRead,
+        ) as exc:
+            failure = exc
+            detail = type(exc).__name__
+        if attempt == _DOWNLOAD_ATTEMPTS:
+            raise DownloadError(
+                f"download failed after {attempt} attempts ({detail}) for {url}"
+            ) from failure
+        delay = _retry_delay(attempt, retry_after)
+        print(
+            f"warning: {detail} downloading {url}; "
+            f"retry {attempt + 1}/{_DOWNLOAD_ATTEMPTS} in {delay:g}s",
+            file=sys.stderr,
+        )
+        time.sleep(delay)
+    raise AssertionError("download retry loop did not terminate")
 
 
 def _requested_version(version: str) -> str:
@@ -170,7 +227,20 @@ def _download_asset(asset: dict) -> bytes:
     url = asset.get("url")
     if not isinstance(url, str):
         raise InstallError("release asset has no API URL")
-    return _request(url, accept="application/octet-stream")
+    try:
+        return _request(url, accept="application/octet-stream")
+    except DownloadError:
+        # GitHub's asset API and public release download route can fail
+        # independently. Both URLs come from the one resolved release; never
+        # resolve `latest` again or bypass the checksum to recover a download.
+        fallback = asset.get("browser_download_url")
+        if not isinstance(fallback, str) or not fallback or fallback == url:
+            raise
+        print(
+            "warning: release asset API unavailable; trying its public download URL",
+            file=sys.stderr,
+        )
+        return _request(fallback, accept="application/octet-stream")
 
 
 def _expected_digest(checksum: bytes, archive_name: str) -> str:

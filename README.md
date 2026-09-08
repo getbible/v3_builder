@@ -91,7 +91,10 @@ export GETBIBLESWORD_BIN="$PWD/.tools/getbiblesword"
 
 The installer reads `conf/GetBibleSwordRelease.json`, verifies both the release
 checksum file and GitHub asset digest, and writes the resolved provenance to
-`.tools/getbiblesword-release.json`. The policy currently follows the latest
+`.tools/getbiblesword-release.json`. Temporary download failures receive bounded
+retries; if the asset API remains unavailable, the installer tries the public
+download URL for that same resolved asset. Checksum failures always stop the
+installation. The policy currently follows the latest
 stable release, which resolves to `0.3.0` at the time of this change. Reproduction
 and incident investigation can override it explicitly with `--version 0.3.0`.
 
@@ -205,6 +208,13 @@ schemas, publication size limits, and fail-closed Git behavior. Integration test
 require the resolved latest stable executable and
 download a representative catalog that includes legacy GBF/Windows-1252 content
 plus real `div type="x-p"` and `div type="paragraph"` Revelation fixtures.
+Installer regressions exercise HTTP failures, connection interruptions, truncated
+responses, bounded retries, public download recovery, and integrity rejection.
+
+The CI workflow runs both unit tests and real native integration on pull requests
+and configured branch pushes. Manual CI runs default to integration enabled;
+an explicit `run_integration: false` opts out for a unit-only investigation.
+Requesting `--run-integration` without an installed executable fails the run.
 
 The `Native GetBibleSWORD Smoke Test` workflow performs this real binary-backed
 integration on master, on a daily schedule, and by manual dispatch. The schedule

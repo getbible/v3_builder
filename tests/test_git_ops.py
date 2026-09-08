@@ -381,6 +381,28 @@ class TestFreshCloneReset:
 
         assert not target.exists()
 
+    def test_a_failed_pull_preserves_the_existing_publication_checkout(self, tmp_path):
+        bare = self._seed_remote(tmp_path)
+        target = tmp_path / 'v3_scripture'
+        _git(['clone', str(bare), str(target)])
+        _git(['remote', 'set-url', 'origin', str(tmp_path / 'missing.git')], cwd=target)
+        (target / 'pending.json').write_text('{"pending":true}\n')
+        original_head = _git(['rev-parse', 'HEAD'], cwd=target).stdout
+        original_status = _git(['status', '--porcelain'], cwd=target).stdout
+        repo = GitRepository(str(target), str(bare))
+
+        with pytest.raises(GitOperationError, match='pull') as error:
+            repo.prepare(pull=True)
+
+        assert error.value.operation == 'pull'
+        assert error.value.stderr
+        assert (target / 'stale.json').read_text() == '{"old":true}\n'
+        assert (target / 'lxx' / '57.json').read_text() == '{"nr":57,"name":"Odes"}\n'
+        assert (target / 'pending.json').read_text() == '{"pending":true}\n'
+        assert _git(['rev-parse', 'HEAD'], cwd=target).stdout == original_head
+        assert _git(['status', '--porcelain'], cwd=target).stdout == original_status
+        assert not (tmp_path / 'v3_scripture_tmp').exists()
+
     def test_without_pull_a_missing_directory_is_simply_created(self, tmp_path):
         target = tmp_path / 'v3_scripture'
 

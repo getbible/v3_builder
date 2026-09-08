@@ -13,9 +13,12 @@ on:
       run_integration:
         description: "Run native integration tests with real SWORD modules"
         required: false
-        default: "false"
+        default: "true"
         type: choice
         options: ["false", "true"]
+
+permissions:
+  contents: read
 
 jobs:
   unit:
@@ -41,7 +44,8 @@ jobs:
   integration:
     name: "Native Integration Tests"
     runs-on: ubuntu-24.04
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_integration == 'true'
+    timeout-minutes: 45
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.run_integration == 'true'
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -58,8 +62,11 @@ jobs:
           python scripts/install_getbiblesword.py
           echo "$PWD/.tools" >> "$GITHUB_PATH"
           .tools/getbiblesword version
+          .tools/getbiblesword contract
           python -m json.tool .tools/getbiblesword-release.json
       - name: Run Integration Tests
         env:
           GETBIBLESWORD_BIN: ${{ github.workspace }}/.tools/getbiblesword
-        run: python -m pytest tests_integration/ -v --tb=short --run-integration
+        run: >-
+          python -m pytest tests_integration/ -v --tb=short
+          --run-integration --integration-seed=20260718
