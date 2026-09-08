@@ -116,6 +116,17 @@ members, including the library symlinks introduced by GetBibleSWORD 0.3.0, are
 never extracted. It writes exact resolved release provenance to
 `.tools/getbiblesword-release.json`.
 
+Release metadata and asset requests make at most four attempts for transient
+HTTP 408, 429, 500, 502, 503, and 504 responses, connection failures, timeouts,
+and incomplete response bodies. Retries use exponential delays of 1, 2, and 4
+seconds; a longer `Retry-After` is honored up to 60 seconds. Permanent HTTP errors
+fail immediately. If an asset API transfer still fails, the installer makes the
+same bounded attempt through its public download URL from the resolved release
+metadata. It never resolves `latest` again during recovery, and both download
+routes must pass the same checksum and GitHub digest checks before replacing the
+executable. An exhausted download leaves any previous executable and provenance
+untouched and fails the job.
+
 Every workflow invokes the installer without a duplicated repository or version.
 `--version X.Y.Z`, `--repository`, and `--policy` remain explicit reproduction
 and incident-investigation overrides.

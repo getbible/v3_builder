@@ -13,6 +13,7 @@ KJV_INSPECTION_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/inspect-kjv-api.y
 KJV_INSPECTION_MAP = REPOSITORY_ROOT / "conf/CrosswireModulesMapKJVInspection.json"
 PREVIEW_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/preview-build.yml"
 NATIVE_SMOKE_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/native-smoke.yml"
+CI_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/ci.yml"
 GETBIBLESWORD_RELEASE_POLICY = (
     REPOSITORY_ROOT / "conf/GetBibleSwordRelease.json"
 )
@@ -101,6 +102,28 @@ def test_native_smoke_continues_to_follow_latest_extractor():
     assert "scripts/install_getbiblesword.py" in workflow
     assert "scripts/install_getbiblesword.py --version" not in workflow
     assert "conf/GetBibleSwordRelease.json" in workflow
+
+
+def test_ci_runs_real_latest_release_integration_for_pushes_and_pull_requests():
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+    integration = workflow.split("\n  integration:\n", 1)[1]
+
+    assert "\n  push:\n" in workflow
+    assert "\n  pull_request:\n" in workflow
+    assert 'default: "true"' in workflow
+    assert (
+        "if: github.event_name != 'workflow_dispatch' || "
+        "github.event.inputs.run_integration == 'true'"
+    ) in integration
+    assert "timeout-minutes: 45" in integration
+    assert "python scripts/install_getbiblesword.py" in integration
+    assert ".tools/getbiblesword contract" in integration
+    assert ".tools/getbiblesword-release.json" in integration
+    assert "GETBIBLESWORD_BIN: ${{ github.workspace }}/.tools/getbiblesword" in integration
+    assert "python -m pytest tests_integration/" in integration
+    assert "--run-integration --integration-seed=" in integration
+    assert "continue-on-error" not in integration
+    assert "--push" not in integration
 
 
 def test_kjv_inspection_workflow_is_fresh_read_only_and_never_publishes():
