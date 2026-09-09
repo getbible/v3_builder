@@ -490,11 +490,6 @@ class GetBibleSwordConverter:
         )
         if verse is not None:
             chapter["verses"].append(verse)
-        else:
-            # An empty verse projection can still carry an actual source heading.
-            osis = _osis_for_tokens(record, markup)
-            if osis is not None:
-                self._merge_semantics(chapter, parse_osis_semantics(osis))
 
     def _book_for_scope(
         self,
