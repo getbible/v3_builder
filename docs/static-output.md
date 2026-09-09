@@ -32,15 +32,31 @@ hexadecimal digits and a line feed. A reader watches a document for changes
 through that small sibling, so no JSON document is written without one; the
 KJV inspection fails on any that lacks or mismatches it.
 
-Every book a source module has is published. Book numbers are the one address
-every translation shares, so they come from `conf/bookNumbers.json` alone:
-Genesis is 1, Matthew 40, Revelation 66, the deuterocanonical books continue
-to 83, and the further books some canons carry (Epistle of Jeremiah, Psalms of
-Solomon, Odes, 1 Enoch, Additions to Daniel, Laodiceans) are 84 to 89. A SWORD
-book name the table does not know fails the module's conversion, and two names
-of one module resolving to the same number fail it too; a guessed number would
-file a book under another book's address and merge their verses. Each
-translation's `books.json` lists exactly the books it has.
+Every source book with publishable content is retained, including books with
+only titles or introductions. Existing addresses remain stable: Genesis is 1,
+Matthew 40, Revelation 66, and established additional books continue to 89.
+`src/book_identity.py` recognizes source OSIS identifiers independently of display
+names, then verified configured name aliases when OSIS is absent. Thus native
+`I Enoch`, the older `1 Enoch` spelling and OSIS `1En` resolve to book 87.
+
+Previously unseen OSIS identities receive numbers in the reserved range
+1,000,000–281,474,977,710,655. The address is 1,000,000 plus the unsigned first six
+bytes of SHA-256 over UTF-8 `getbible-book/v1\0` followed by the normalized identity
+key (for example `osis:newbook`; `\0` denotes one NUL byte). OSIS identity keys use
+Unicode NFC, collapsed whitespace and case folding, with numeric chapter/verse
+suffixes removed. Dotted work identifiers remain intact. These numbers are exact
+in JavaScript and do not depend on module order, display names or the selected
+catalog. When OSIS is absent, an unrecognized source name supplies a `name:` key;
+an abbreviation is the final fallback. Such fallback identities necessarily
+depend on the supplied name or abbreviation because no independent identity exists.
+
+Number collisions, contradictory known identities, or distinct native book
+positions claiming the same address raise a diagnostic instead of silently
+merging or dropping content. Extension-number derivation is a versioned address
+contract: future compatibility mappings must preserve addresses already assigned
+by it. Empty canon positions do not create phantom books or chapters. Each
+translation's `books.json` lists every emitted book, including books with an empty
+`chapters` array when their own introduction or title is the supplied content.
 
 A chapter for which the source supplies an introduction but no verse text stays
 nested in its book and translation documents with an empty `verses` array and
@@ -229,9 +245,12 @@ This prevents silent semantic loss while keeping the generated documents small.
 - Semantic fields are additive and deterministic.
 - No emitted verse `text` begins with a line-ending character.
 - Every JSON document has a `.sha` sibling holding the SHA-1 of its bytes.
-- Every book a module has is published under its number from
-  `conf/bookNumbers.json`; an unknown book name or a number shared by two books
-  of one module fails conversion instead of dropping, renumbering, or merging.
+- Every source book with text, titles or introductions is retained. Known OSIS
+  identities and verified name aliases preserve established addresses; new
+  identities receive deterministic extension numbers. A collision or conflicting
+  source identity fails explicitly instead of silently merging books.
+- Declared books and chapters with verses must have their standalone files;
+  missing files fail indexing rather than producing an incomplete tree.
 - A publication repository is reset to its preserved files after it is cloned
   or pulled, so files an earlier build published are not carried forward.
 - `openapi.json` is generated from the hashed tree on every build, never

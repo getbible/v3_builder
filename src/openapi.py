@@ -19,6 +19,7 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
+from book_identity import MAX_BOOK_NUMBER
 from file_ops import write_json_minified, write_text_atomic
 
 OPENAPI_VERSION = "3.1.0"
@@ -69,11 +70,13 @@ lists the books the translation has and
 carrying the same `url` and `sha` members, so nothing need be guessed.
 
 **Addressing.** `book` is the GetBible book number: Genesis is 1, Matthew 40,
-Revelation 66, and the deuterocanonical and other additional books continue
-to 89. Every book a source module has is published under its number, and
-`books.json` lists exactly which ones a translation has. `chapter` and
-`verse` are the numbers of the translation's own versification. Only books,
-chapters and verses that have text are published as documents. A chapter for
+Revelation 66, and the established additional books continue to 89. Further
+source book identities receive deterministic integer numbers starting at
+1,000,000. Existing book numbers are preserved; source OSIS identifiers resolve
+unfamiliar or localized names. `books.json` lists exactly which books a
+translation has, including books containing only titles or introductions.
+`chapter` and `verse` follow the translation's own versification. Empty
+canon positions do not create books or chapters. A chapter for
 which the source supplies an introduction but no verse text stays nested in
 its book and translation documents with an empty `verses` array and its
 `titles`, and has no document of its own.
@@ -448,10 +451,11 @@ def _parameters(abbreviations: list[str]) -> dict[str, Any]:
             "required": True,
             "description": (
                 "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, "
-                "and the deuterocanonical and other additional books continue to "
-                "89. books.json lists the numbers the translation has."
+                "and established additional books continue to 89. Further source "
+                "identities receive deterministic numbers from 1000000. "
+                "books.json lists the numbers the translation has."
             ),
-            "schema": {"type": "integer", "minimum": 1, "maximum": 89},
+            "schema": {"type": "integer", "minimum": 1, "maximum": MAX_BOOK_NUMBER},
         },
         "chapter": {
             "name": "chapter",

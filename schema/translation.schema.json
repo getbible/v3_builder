@@ -50,7 +50,7 @@
       "items": {
         "$ref": "book.schema.json#/$defs/entry"
       },
-      "description": "The books of the translation that have text, in canonical order."
+      "description": "The source module's books with verses, titles, or introductions, in source order. Empty canon positions without content are omitted."
     },
     "distribution_lcsh": {
       "type": "string",

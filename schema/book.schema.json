@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "book.schema.json",
   "title": "Book",
-  "description": "One book: the translation's metadata, the book's number and name, its title metadata and introduction when the source supplies them, and every chapter. Each nested chapter is what the standalone chapter document holds after the shared metadata.",
+  "description": "One book: the translation's metadata, the book's number and name, its title metadata and introduction when the source supplies them, and every chapter. Each nested chapter is what the standalone chapter document holds after the shared metadata. Books containing only title metadata or introduction text remain published with an empty chapters array.",
   "type": "object",
   "properties": {
     "translation": {
@@ -33,8 +33,8 @@
     "nr": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 89,
-      "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical and other additional books continue to 89."
+      "maximum": 281474977710655,
+      "description": "Stable GetBible book number. Established books keep numbers 1 through 89; additional source book identities receive deterministic extension numbers. The translation's books.json lists its actual book numbers."
     },
     "name": {
       "type": "string",
@@ -53,11 +53,10 @@
     },
     "chapters": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "$ref": "chapter.schema.json#/$defs/entry"
       },
-      "description": "The chapters of the book, in chapter order."
+      "description": "The content-bearing chapters of the book, in source order. Empty when the source supplies only book titles or introduction text."
     }
   },
   "required": [
@@ -81,8 +80,8 @@
         "nr": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 89,
-          "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical and other additional books continue to 89."
+          "maximum": 281474977710655,
+          "description": "Stable GetBible book number. Established books keep numbers 1 through 89; additional source book identities receive deterministic extension numbers. The translation's books.json lists its actual book numbers."
         },
         "name": {
           "type": "string",
@@ -101,11 +100,10 @@
         },
         "chapters": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "$ref": "chapter.schema.json#/$defs/entry"
           },
-          "description": "The chapters of the book, in chapter order."
+          "description": "The content-bearing chapters of the book, in source order. Empty when the source supplies only book titles or introduction text."
         }
       },
       "required": [
@@ -113,7 +111,45 @@
         "name",
         "chapters"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "chapters": {
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "titles"
+          ]
+        },
+        {
+          "required": [
+            "introduction"
+          ]
+        }
+      ]
     }
-  }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "chapters": {
+          "minItems": 1
+        }
+      }
+    },
+    {
+      "required": [
+        "titles"
+      ]
+    },
+    {
+      "required": [
+        "introduction"
+      ]
+    }
+  ]
 }
