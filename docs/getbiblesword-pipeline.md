@@ -20,11 +20,14 @@ explicit and both projects can release and test independently.
    LF framing, byte envelopes, artifact groups, counts, diagnostics, successful
    footer, and exact stream SHA-256.
 7. Python streams the validated entries into compact translation, book, chapter,
-   and verse JSON. Every book the module has is filed under its number from
-   `conf/bookNumbers.json`; an unknown book name fails the module rather than
-   guessing a number. It retains text, complete token/span data, paragraph
-   markers, book titles, chapter-level `editorial`, and introduction
-   semantics—not extraction envelopes or duplicate chapter/verse title arrays.
+   and verse JSON. Source OSIS identities and verified name aliases resolve the
+   established numbers from `conf/bookNumbers.json`. A previously unseen book
+   receives a deterministic extension number derived from its source identity.
+   This never uses a testament-local index as an API address. Distinct source
+   books cannot silently merge under one number. Text, complete token/span data,
+   paragraph markers, book titles, chapter-level `editorial`, and introductions
+   are preserved. Introduction/title-only books remain present; empty canon
+   positions do not manufacture output.
 8. The module ZIPs, SWORD root, and contracts are discarded after the build
    attempt, including a failed conversion.
 9. Generated Scripture files pass hard-size and filesystem safety gates before

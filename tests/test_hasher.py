@@ -567,3 +567,71 @@ class TestChecksumSiblings:
         second = (scripture_dir / 'translations.sha').read_text()
         assert first != second
         assert second == sha1_of_file(scripture_dir / 'translations.json') + '\n'
+
+
+class TestMissingDeclaredContent:
+    @pytest.mark.parametrize("hash_level", [hash_books, hash_chapters])
+    def test_missing_declared_book_is_an_error(self, scripture_dir, hash_level):
+        (scripture_dir / "kjv" / "1.json").unlink()
+        with pytest.raises(FileNotFoundError, match="Missing declared book document"):
+            hash_level(str(scripture_dir))
+
+    @pytest.mark.parametrize("hash_level", [hash_books, hash_chapters])
+    def test_missing_book_directory_is_an_error(self, scripture_dir, hash_level):
+        (scripture_dir / "kjv").rename(scripture_dir / "moved-kjv")
+        with pytest.raises(FileNotFoundError, match="Missing book directory for kjv"):
+            hash_level(str(scripture_dir))
+
+    def test_missing_chapter_with_verses_is_an_error(self, scripture_dir):
+        (scripture_dir / "kjv" / "1" / "1.json").unlink()
+        with pytest.raises(FileNotFoundError, match="Missing declared chapter document"):
+            hash_chapters(str(scripture_dir))
+
+    def test_missing_directory_for_chapters_with_verses_is_an_error(self, scripture_dir):
+        (scripture_dir / "kjv" / "1").rename(scripture_dir / "kjv" / "moved-1")
+        with pytest.raises(FileNotFoundError, match="Missing chapter directory"):
+            hash_chapters(str(scripture_dir))
+
+    @pytest.mark.parametrize("content", [
+        {"introduction": [{"text": "Book preface."}]},
+        {"titles": [{"text": "Book title", "type": "main"}]},
+    ])
+    def test_book_only_content_has_book_and_empty_chapter_indexes(
+        self, scripture_dir, content
+    ):
+        path = scripture_dir / "kjv" / "1.json"
+        data = json.loads(path.read_text())
+        data["chapters"] = []
+        data.update(content)
+        path.write_text(json.dumps(data))
+        (scripture_dir / "kjv" / "1").rename(scripture_dir / "kjv" / "old-1")
+
+        _, books, chapters = hash_all(str(scripture_dir))
+
+        assert "1" in books["kjv"]
+        assert chapters["kjv"]["1"] == {}
+        book_index = json.loads((scripture_dir / "kjv" / "books.json").read_text())
+        for key, value in content.items():
+            assert book_index["1"][key] == value
+        for name in ("chapters", "checksum"):
+            index = scripture_dir / "kjv" / "1" / f"{name}.json"
+            assert json.loads(index.read_text()) == {}
+            assert index.with_suffix(".sha").read_text() == sha1_of_file(index) + "\n"
+
+    def test_nested_chapter_without_verses_needs_no_standalone_file(self, scripture_dir):
+        path = scripture_dir / "kjv" / "1.json"
+        data = json.loads(path.read_text())
+        data["chapters"].append({
+            "chapter": 3,
+            "name": "Genesis 3",
+            "verses": [],
+            "introduction": [{"text": "Chapter preface."}],
+            "titles": [{"text": "Chapter title", "type": "chapter"}],
+        })
+        path.write_text(json.dumps(data))
+
+        result = hash_chapters(str(scripture_dir))
+
+        assert sorted(result["kjv"]["1"]) == ["1", "2"]
+        assert not (scripture_dir / "kjv" / "1" / "3.json").exists()
+        assert json.loads(path.read_text())["chapters"][2] == data["chapters"][2]

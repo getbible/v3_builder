@@ -16,7 +16,7 @@ pytestmark = pytest.mark.integration
 
 # Modules whose real extracted entries contain OSIS <w> tags with lemma/morph.
 # This is a source capability assertion, independent of a module format label.
-OSIS_WORD_MODULES = {'kjv', 'kjva', 'textusreceptus'}
+OSIS_WORD_MODULES = {'kjv', 'kjva', 'textusreceptus', 'lxx'}
 
 
 class TestTokenSpanOnOsisModules:

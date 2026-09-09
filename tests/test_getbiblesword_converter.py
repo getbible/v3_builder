@@ -676,10 +676,13 @@ def _module_records(entries):
     ]
 
 
-def _verse_in(book_name, ordinal, chapter, verse, text, testament=1, book_index=1):
+def _verse_in(book_name, ordinal, chapter, verse, text, testament=1, book_index=1, osis_book=None):
     record = entry(ordinal, chapter, verse, "verse", text, text)
     record["scope"]["book_name"] = bv(book_name)
     record["scope"]["book_abbreviation"] = bv(book_name[:3])
+    record["scope"]["osis_reference"] = bv(
+        f"{osis_book}.{chapter}.{verse}" if osis_book else ""
+    )
     record["scope"]["testament"] = testament
     record["scope"]["book"] = book_index
     record["key"] = bv(f"{book_name} {chapter}:{verse}")
@@ -724,13 +727,30 @@ def test_every_book_is_filed_under_its_number_from_the_table(tmp_path):
     assert "_sword_name" not in document["books"][0]
 
 
-def test_an_unknown_book_name_fails_instead_of_guessing_a_number(tmp_path):
-    with pytest.raises(ConversionError, match="unknown SWORD book name 'Odes'.*bookNumbers.json"):
-        _convert(
-            tmp_path,
-            _config(**{"Micah": 33}),
-            [_verse_in("Odes", 0, 1, 1, "Let us sing to the Lord", book_index=57)],
-        )
+def test_an_unknown_book_is_published_with_a_stable_source_identity(tmp_path):
+    first, output = _convert(
+        tmp_path,
+        _config(**{"Micah": 33}),
+        [_verse_in("A Newly Supplied Book", 0, 1, 1, "Preserved text",
+                   book_index=57, osis_book="NewBook")],
+    )
+    book = first["books"][0]
+    assert book["nr"] >= 1_000_000
+    assert book["name"] == "A Newly Supplied Book"
+    assert book["chapters"][0]["verses"][0]["text"] == "Preserved text"
+    assert (output / "lxx" / str(book["nr"]) / "1.json").exists()
+
+    second, _ = _convert(
+        tmp_path,
+        _config(**{"Micah": 33}),
+        [
+            _verse_in("Micah", 0, 1, 1, "Another book", book_index=33),
+            _verse_in("A Different Display Name", 1, 1, 1, "Preserved text",
+                      book_index=58, osis_book="NewBook"),
+        ],
+    )
+    assert second["books"][1]["nr"] == book["nr"]
+    assert_no_lossless_envelopes(second)
 
 
 def test_two_books_sharing_a_number_fail_instead_of_merging(tmp_path):
@@ -752,7 +772,7 @@ def test_the_checked_in_table_numbers_the_additional_books(tmp_path):
     )
     config.translation_names["LXX"] = "lxx"
     names = [
-        "Epistle of Jeremiah", "Psalms of Solomon", "Odes", "1 Enoch",
+        "Epistle of Jeremiah", "Psalms of Solomon", "Odes", "I Enoch",
         "Additions to Daniel", "Laodiceans",
     ]
     entries = [
@@ -767,3 +787,56 @@ def test_the_checked_in_table_numbers_the_additional_books(tmp_path):
         (87, "1 Enoch"), (88, "Additions to Daniel"), (89, "Laodiceans"),
     ]
     assert sorted(int(path.name) for path in (output / "lxx").iterdir() if path.is_dir()) == list(range(84, 90))
+
+
+def test_lxx_enoch_empty_introduction_does_not_create_a_phantom_book(tmp_path):
+    config = ConversionConfig.from_files(
+        os.path.join(REPOSITORY_ROOT, "conf"),
+        os.path.join(REPOSITORY_ROOT, "conf", "CrosswireModulesMapTest.json"),
+    )
+    empty_intro = _verse_in("I Enoch", 1, 0, 0, "", book_index=59, osis_book="1En")
+    empty_intro["scope"]["intro_scope"] = "book"
+    document, output = _convert(tmp_path, config, [
+        _verse_in("Genesis", 0, 1, 1, "Existing LXX text", osis_book="Gen"),
+        empty_intro,
+        _verse_in("I Enoch", 2, 1, 1, "", book_index=59, osis_book="1En"),
+    ])
+    assert [book["nr"] for book in document["books"]] == [1]
+    assert not (output / "lxx" / "87.json").exists()
+
+
+def test_lxx_enoch_introduction_and_verses_are_preserved_when_supplied(tmp_path):
+    config = ConversionConfig.from_files(
+        os.path.join(REPOSITORY_ROOT, "conf"),
+        os.path.join(REPOSITORY_ROOT, "conf", "CrosswireModulesMapTest.json"),
+    )
+    introduction = _verse_in("I Enoch", 0, 0, 0, "The introduction",
+                             book_index=59, osis_book="1En")
+    introduction["scope"]["intro_scope"] = "book"
+    document, output = _convert(tmp_path, config, [
+        introduction,
+        _verse_in("I Enoch", 1, 1, 1, "The supplied verse",
+                  book_index=59, osis_book="1En"),
+    ])
+    book = document["books"][0]
+    assert (book["nr"], book["name"]) == (87, "1 Enoch")
+    assert book["introduction"] == [{"text": "The introduction"}]
+    assert book["chapters"][0]["verses"][0]["text"] == "The supplied verse"
+    assert (output / "lxx" / "87" / "1.json").exists()
+
+
+def test_unfamiliar_source_name_uses_known_osis_identity(tmp_path):
+    document, output = _convert(
+        tmp_path, _config(**{"Genesis": 1}),
+        [_verse_in("בראשית", 0, 1, 1, "Source content", osis_book="Gen")],
+    )
+    assert (document["books"][0]["nr"], document["books"][0]["name"]) == (1, "בראשית")
+    assert (output / "lxx" / "1" / "1.json").exists()
+
+
+def test_distinct_source_positions_cannot_silently_merge(tmp_path):
+    with pytest.raises(ConversionError, match="source identities or positions disagree"):
+        _convert(tmp_path, _config(**{"Genesis": 1}), [
+            _verse_in("Genesis", 0, 1, 1, "First source", book_index=1, osis_book="Gen"),
+            _verse_in("Genesis", 1, 1, 2, "Second source", book_index=2, osis_book="Gen"),
+        ])

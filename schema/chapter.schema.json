@@ -33,8 +33,8 @@
     "book_nr": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 89,
-      "description": "GetBible book number: Genesis is 1, Matthew 40, Revelation 66, and the deuterocanonical and other additional books continue to 89."
+      "maximum": 281474977710655,
+      "description": "Stable GetBible book number. Established books keep numbers 1 through 89; additional source book identities receive deterministic extension numbers. The translation's books.json lists its actual book numbers."
     },
     "book_name": {
       "type": "string",
@@ -81,7 +81,7 @@
   "$defs": {
     "entry": {
       "title": "Chapter entry",
-      "description": "A chapter as nested in a book or translation document: the same members as the standalone chapter document after the shared metadata. A chapter for which the source supplied an introduction but no verse text is kept with an empty verses array and its titles, and has no standalone document; a chapter with verses carries its headings in editorial and never in titles.",
+      "description": "A chapter as nested in a book or translation document: the same members as the standalone chapter document after the shared metadata. A chapter for which the source supplied an introduction or titles but no verse text is kept with an empty verses array and its titles, and has no standalone document; a chapter with verses carries its headings in editorial and never in titles.",
       "type": "object",
       "properties": {
         "chapter": {

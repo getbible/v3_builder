@@ -1,0 +1,125 @@
+name: "Full Catalog"
+
+on:
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: getbible-v3-full-catalog-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-catalog:
+    name: "Validate every approved module"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install policy-selected GetBibleSWORD release
+        run: |
+          python scripts/install_getbiblesword.py
+          .tools/getbiblesword version
+          .tools/getbiblesword contract
+          python -m json.tool .tools/getbiblesword-release.json
+
+      - name: Prepare fresh validation workspace
+        run: |
+          echo "CATALOG_ROOT=$RUNNER_TEMP/getbible-full-catalog-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Build the complete approved catalog
+        env:
+          GETBIBLESWORD_BIN: ${{ github.workspace }}/.tools/getbiblesword
+        run: |
+          python src/builder.py --conf=/dev/null \
+            --bconf=conf/CrosswireModulesMap.json \
+            --publication-policy=conf/PublicationPolicy.json \
+            --api="$CATALOG_ROOT/api" \
+            --zip="$CATALOG_ROOT/sword_zip" \
+            --sword-root="$CATALOG_ROOT/sword_root" \
+            --contracts="$CATALOG_ROOT/sword_contracts" \
+            --repo-hash= --repo-scripture=
+
+      - name: Verify the complete catalog and summarize output
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def read(path):
+              return json.loads(path.read_text(encoding="utf-8"))
+
+          requested = read(Path("conf/CrosswireModulesMap.json"))
+          root = Path(os.environ["CATALOG_ROOT"]) / "api_scripture"
+          translations = read(root / "translations.json")
+          expected = set(requested.values())
+          if set(translations) != expected or len(expected) != len(requested):
+              raise SystemExit("Generated translations do not match the complete module map")
+
+          book_count = 0
+          chapter_count = 0
+          verse_count = 0
+          for abbreviation in sorted(expected):
+              translation = read(root / f"{abbreviation}.json")
+              books = translation["books"]
+              numbers = [str(book["nr"]) for book in books]
+              if not books or len(numbers) != len(set(numbers)):
+                  raise SystemExit(f"{abbreviation}: missing books or conflicting book numbers")
+              book_index = read(root / abbreviation / "books.json")
+              if set(book_index) != set(numbers):
+                  raise SystemExit(f"{abbreviation}: generated book index dropped a book")
+              for book in books:
+                  number = str(book["nr"])
+                  document = root / abbreviation / f"{number}.json"
+                  if not document.is_file() or not document.with_suffix(".sha").is_file():
+                      raise SystemExit(f"{abbreviation}/{number}: missing book document or checksum")
+                  for chapter in book["chapters"]:
+                      if chapter["verses"]:
+                          document = root / abbreviation / number / f'{chapter["chapter"]}.json'
+                          if not document.is_file() or not document.with_suffix(".sha").is_file():
+                              raise SystemExit(f"{document}: missing chapter document or checksum")
+                      chapter_count += 1
+                      verse_count += len(chapter["verses"])
+              book_count += len(books)
+
+          for tree in (root, root.parent / "api"):
+              if set(read(tree / "translations.json")) != expected:
+                  raise SystemExit(f"{tree}: incomplete translation index")
+              if not (tree / "openapi.json").is_file():
+                  raise SystemExit(f"{tree}: missing generated OpenAPI description")
+
+          summary = (
+              f"Validated {len(requested)} modules, {book_count} books, "
+              f"{chapter_count} chapters and {verse_count} verses. "
+              "Publication was disabled."
+          )
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
+              stream.write(summary + "\n")
+          PY
+
+      - name: Discard generated and transient validation data
+        if: always()
+        run: |
+          if [ -n "$CATALOG_ROOT" ]; then
+            rm -rf -- "$CATALOG_ROOT"
+          fi

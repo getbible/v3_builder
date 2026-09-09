@@ -127,12 +127,16 @@ class ContentHasher:
             abbreviation = filename[:-5]
             abbr_dir = os.path.join(self._folder, abbreviation)
 
-            if not os.path.isdir(abbr_dir):
-                continue
-
             filepath = os.path.join(self._folder, filename)
             with open(filepath, 'r', encoding='utf-8') as f:
                 translation_data = json.load(f)
+
+            if not os.path.isdir(abbr_dir):
+                if translation_data.get('books'):
+                    raise FileNotFoundError(
+                        f'Missing book directory for {abbreviation}: {abbr_dir}'
+                    )
+                continue
 
             language = translation_data.get('language', '')
             translation = translation_data.get('translation', '')
@@ -147,7 +151,7 @@ class ContentHasher:
             for nr in book_nrs:
                 book_path = os.path.join(abbr_dir, f'{nr}.json')
                 if not os.path.isfile(book_path):
-                    continue
+                    raise FileNotFoundError(f'Missing declared book document: {book_path}')
 
                 book_data = self._reformat_json(book_path)
                 file_hash = _sha1_file(book_path)
@@ -192,12 +196,16 @@ class ContentHasher:
             abbreviation = filename[:-5]
             abbr_dir = os.path.join(self._folder, abbreviation)
 
-            if not os.path.isdir(abbr_dir):
-                continue
-
             filepath = os.path.join(self._folder, filename)
             with open(filepath, 'r', encoding='utf-8') as f:
                 translation_data = json.load(f)
+
+            if not os.path.isdir(abbr_dir):
+                if translation_data.get('books'):
+                    raise FileNotFoundError(
+                        f'Missing book directory for {abbreviation}: {abbr_dir}'
+                    )
+                continue
 
             language = translation_data.get('language', '')
             translation_name = translation_data.get('translation', '')
@@ -210,13 +218,26 @@ class ContentHasher:
                 book_path = os.path.join(abbr_dir, f'{nr}.json')
                 book_dir = os.path.join(abbr_dir, nr)
 
-                if not os.path.isfile(book_path) or not os.path.isdir(book_dir):
-                    continue
+                if not os.path.isfile(book_path):
+                    raise FileNotFoundError(f'Missing declared book document: {book_path}')
 
                 with open(book_path, 'r', encoding='utf-8') as f:
                     book_data = json.load(f)
 
+                if not os.path.isdir(book_dir):
+                    if any(c.get('verses') for c in book_data.get('chapters', [])):
+                        raise FileNotFoundError(
+                            f'Missing chapter directory for {abbreviation}/{nr}: {book_dir}'
+                        )
+                    # A book containing only titles or introductions still has
+                    # discoverable, empty chapter indexes.
+                    os.makedirs(book_dir, exist_ok=True)
+
                 book_name = book_data.get('name', '')
+                required_chapters = {
+                    str(c['chapter']) for c in book_data.get('chapters', [])
+                    if c.get('verses')
+                }
                 chapters = sorted(
                     [c['chapter'] for c in book_data.get('chapters', [])],
                     key=lambda x: int(x) if isinstance(x, (int, str)) and str(x).isdigit() else 0
@@ -232,6 +253,12 @@ class ContentHasher:
                     ch_path = os.path.join(book_dir, f'{ch_str}.json')
 
                     if not os.path.isfile(ch_path):
+                        if ch_str in required_chapters:
+                            raise FileNotFoundError(
+                                f'Missing declared chapter document: {ch_path}'
+                            )
+                        # Chapters with introductions/titles and no verses are
+                        # intentionally nested in the book document only.
                         continue
 
                     file_hash = _sha1_file(ch_path)

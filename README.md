@@ -29,8 +29,11 @@ official SWORD engine through the separately released
   legacy Windows-1252/Latin-1 bytes are converted instead of rejecting the catalog.
 - Treats module ZIPs, the SWORD installation, and lossless contracts as transient
   working data and discards them after every build.
-- Publishes every book a module has under its number from `conf/bookNumbers.json`,
-  which now reaches 89, and fails a module whose book the table does not know.
+- Resolves every source book by its OSIS identity or source name, retaining the
+  established book numbers 1–89 and automatically assigning stable extension
+  numbers to new identities. Unfamiliar or localized names do not block a build.
+- Preserves books containing only introductions or titles, while excluding empty
+  canon positions that contain no publishable content.
 - Applies a default-deny publication policy before a module can enter a build.
 - Keeps C++ extraction and Python JSON generation as independently releasable and
   testable projects.
@@ -206,8 +209,9 @@ footer verification, byte envelopes, ZIP traversal/conflicts, publication
 authorization, semantic projection, the generated tree description and its
 schemas, publication size limits, and fail-closed Git behavior. Integration tests
 require the resolved latest stable executable and
-download a representative catalog that includes legacy GBF/Windows-1252 content
-plus real `div type="x-p"` and `div type="paragraph"` Revelation fixtures.
+download a representative catalog that includes legacy GBF/Windows-1252 content,
+LXX's extended canon, and real `div type="x-p"` and `div type="paragraph"`
+Revelation fixtures.
 Installer regressions exercise HTTP failures, connection interruptions, truncated
 responses, bounded retries, public download recovery, and integrity rejection.
 
@@ -221,6 +225,11 @@ integration on master, on a daily schedule, and by manual dispatch. The schedule
 is deliberate: a newly published GetBibleSWORD release is tested even when Builder
 has not changed. Publication and preview workflows consume that same central
 latest-stable policy.
+
+The `Full Catalog` workflow runs on pull requests and manual dispatch. It builds
+every approved module with publication disabled, verifies the complete translation
+map and every emitted book/chapter document, and checks indexes and OpenAPI in
+both generated trees. It reports totals without uploading the generated catalog.
 
 The `Test Build` workflow builds the representative real modules and uploads only
 the generated tree preview. Lossless contracts are not uploaded or cached. The
