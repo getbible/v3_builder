@@ -840,3 +840,17 @@ def test_distinct_source_positions_cannot_silently_merge(tmp_path):
             _verse_in("Genesis", 0, 1, 1, "First source", book_index=1, osis_book="Gen"),
             _verse_in("Genesis", 1, 1, 2, "Second source", book_index=2, osis_book="Gen"),
         ])
+
+
+def test_empty_verse_heading_is_not_relocated_before_earlier_text(tmp_path):
+    document, _ = _convert(tmp_path, _config(Genesis=1), [
+        entry(0, 1, 1, "verse", "Earlier verse.", "Earlier verse."),
+        entry(1, 1, 2, "verse", '<title type="section">Later section</title>', ""),
+        entry(2, 1, 3, "verse",
+              '<title type="section">Current section</title>Later verse.',
+              "Later verse."),
+    ])
+    chapter = document["books"][0]["chapters"][0]
+    assert [verse["verse"] for verse in chapter["verses"]] == [1, 3]
+    assert [item["text"] for item in chapter["editorial"]] == ["Current section"]
+    assert chapter["editorial"][0]["anchor"] == {"verse": 3, "edge": "before"}
