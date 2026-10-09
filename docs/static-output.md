@@ -186,6 +186,18 @@ remain inside the note; they never become main-text headings or paragraph starts
 A structure contains `order`, `type: "structure"`, `anchor`, and `content`. This
 preserves poetry, tables, figures, and otherwise unrecognized source elements.
 
+A flat segment of complete lexical words, such as an OSIS variant reading, uses
+the existing verse `spans` array: `tag: "seg"`, every segment attribute, its source
+text, and the inclusive token range. The tokens retain each word's lexical data.
+When this represents the complete segment, no duplicate structure tree is needed.
+Empty segments, mixed prose, nested markup, and other details not represented by
+that span retain their source content. Unresolved display positions remain `0`
+in the existing word ranges; source text and token ranges are still retained.
+Likewise, an empty terminal book, chapter, or verse marker can retain just its ordered
+marker content at a verified Unicode end offset when the preceding lexical data
+is already represented. If the endpoint or surrounding source structure cannot
+be represented faithfully, the complete source tree remains present.
+
 `content` is an ordered recursive array of strings or elements with `tag`,
 optional string-valued `attrs`, and `children` (another content array). It retains
 source structure and metadata as data, not executable HTML. Consumers must render

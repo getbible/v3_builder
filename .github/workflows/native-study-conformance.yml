@@ -17,7 +17,9 @@ jobs:
   candidate-integration:
     name: "Study extraction with pinned native candidate"
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Includes native compilation, full enriched contracts, repeated hashing,
+    # and validation of every translation against the generated schemas.
+    timeout-minutes: 90
     steps:
       - name: Checkout Builder
         uses: actions/checkout@v6

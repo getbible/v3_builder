@@ -14,7 +14,8 @@ from urllib.parse import urlsplit
 
 from book_identity import BookResolver, OSIS_NUMBERS
 from osis_parser import (
-    _main_text_elements, _normalize_visible_text, _parse_osis_fragment,
+    _flat_lexical_segment, _main_text_elements, _normalize_visible_text,
+    _ordinary_lexical_word, _parse_osis_fragment,
     _semantic_visible_text, _strip_ns, build_source_alignment,
 )
 
@@ -173,7 +174,7 @@ def extract_study(raw_osis: str, display_text: str, verse: int, *, context: dict
             result['content'] = [raw_osis]
         return result
     resolver = context.get('book_resolver') or BookResolver({}, {})
-    _, source_ranges, map_boundary = build_source_alignment(root, display_text)
+    source, source_ranges, map_boundary = build_source_alignment(root, display_text)
     parents = {child: parent for parent in root.iter() for child in parent}
     node_ids = {}
 
@@ -326,8 +327,10 @@ def extract_study(raw_osis: str, display_text: str, verse: int, *, context: dict
         result['title_content'].append(title)
     # Notes are already represented in full by editorial/reference entries;
     # unfamiliar structures inside them must not duplicate the entire verse.
-    def needs_structure(element):
+    def needs_structure(element, ignored=()):
         for child in element:
+            if child in ignored:
+                continue
             tag = _strip_ns(child.tag)
             if tag in {'note', 'title'}:
                 continue
@@ -345,9 +348,23 @@ def extract_study(raw_osis: str, display_text: str, verse: int, *, context: dict
             if tag == 'seg' and not (
                 child.get('type') == 'x-transChange' or child.get('subType') == 'x-added'
             ):
-                # Token flags describe morphology/variants but do not retain
-                # their exact segment boundaries or all source metadata.
-                return True
+                # Flat lexical segments are represented completely by their
+                # actual source span plus the existing lexical tokens. Do not
+                # duplicate every word/attribute in a second full verse tree.
+                # Empty/mixed/nested segments still need structural content.
+                start, end = source_ranges.get(child, (0, 0))
+                represented = _flat_lexical_segment(child) and any(
+                    span.get('tag') == 'seg'
+                    and span.get('attrs', {}) == dict(child.attrib)
+                    and span.get('span') == source[start:end].strip()
+                    for span in context.get('spans', [])
+                )
+                if not represented or any(
+                    ancestor.tag == 'w'
+                    or ancestor.get('{http://www.w3.org/XML/1998/namespace}space') == 'preserve'
+                    for ancestor in _ancestors(child, parents)
+                ):
+                    return True
             if tag in {'osis', 'osisText', 'chapter', 'verse'} and child.attrib:
                 return True
             if tag == 'w' and any('}' in name or not value for name, value in child.attrib.items()):
@@ -357,10 +374,56 @@ def extract_study(raw_osis: str, display_text: str, verse: int, *, context: dict
                 return True
             if tag == 'p' and (child.attrib or source_ranges.get(child, (0, 0))[0] > 0):
                 return True
-            if needs_structure(child):
+            if needs_structure(child, ignored):
                 return True
         return False
 
     if context.get('retain_content') or needs_structure(root):
         result['content'] = tree
+        if not context.get('retain_content'):
+            # A closing chapter marker need not repeat an entire lexical verse.
+            # Only compact an empty root-level suffix after fully represented
+            # words/segments, and only when its exact display anchor is known.
+            suffix = []
+            for child in reversed(root):
+                is_boundary = (child.tag in {'chapter', 'verse'} or (
+                    child.tag == 'div' and child.get('type') == 'book'
+                )) and (
+                    bool(child.get('sID')) != bool(child.get('eID'))
+                )
+                if (len(child) or child.text or (child.tail or '').strip()
+                        or child.get('{http://www.w3.org/XML/1998/namespace}space') == 'preserve'
+                        or not (is_boundary or child.tag == 'seg')):
+                    break
+                suffix.insert(0, child)
+            prefix = list(root)[:len(root) - len(suffix)]
+            words = [word for child in prefix
+                     for word in ([child] if child.tag == 'w' else list(child))]
+            tokens = context.get('tokens', [])
+            if (suffix and any(child.tag in {'chapter', 'verse', 'div'} for child in suffix)
+                    and prefix and not (root.text or '').strip()
+                    and all((_ordinary_lexical_word(child) or _flat_lexical_segment(child))
+                            and not (child.tail or '').strip() for child in prefix)
+                    and len(words) == len(tokens)
+                    and all(word.text == token.get('token') for word, token in zip(words, tokens))
+                    and tokens[-1].get('word_start', 0) > 0
+                    and not needs_structure(root, suffix)):
+                start = source_ranges[suffix[0]][0]
+                offset = map_boundary(start, edge='after')
+                if offset is None and not source[start:].strip():
+                    # SWORD can remove ordinary trailing layout whitespace.
+                    # Its preceding aligned character proves the same endpoint.
+                    trimmed = len(source[:start].rstrip())
+                    candidate = map_boundary(trimmed, edge='after')
+                    if candidate == len(display_text):
+                        offset = candidate
+                if offset == len(display_text):
+                    result['content'] = [node(child.tag, dict(child.attrib), []) for child in suffix]
+                    result['anchor'] = {'verse': verse, 'offset': offset}
     return result
+
+
+def _ancestors(element, parents):
+    while element in parents:
+        element = parents[element]
+        yield element
