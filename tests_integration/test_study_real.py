@@ -275,3 +275,30 @@ def test_real_divine_name_apostrophe_survives_native_projection_and_publication(
         # Native may explicitly omit a broken projection. Any projection it
         # does supply must actually be Unicode and retain the punctuation.
         assert '’' in _text(normalized)
+
+
+def test_real_native_reference_list_enriches_source_note_without_duplicates(converted_modules):
+    module = converted_modules['web']
+    record = next(record for record in _entries(module)
+                  if _text(record['scope']['osis_reference']) == 'Matt.4.6')
+    root = _source_tree(record)
+    source_note = next(element for element in root.iter()
+                       if _tag(element) == 'note' and element.get('type') == 'crossReference')
+    expected = _words(''.join(source_note.itertext()))
+    _, chapter = _chapter(module, record)
+    references = [item for item in chapter.get('reference', {}).get('items', [])
+                  if item['anchor']['verse'] == 6 and _words(item['text']) == expected]
+    assert len(references) == 1, 'Native refList must enrich its source note, not duplicate the citation'
+    reference = references[0]
+    assert reference['anchor'].get('alignment') != 'unresolved'
+    assert 'offset' in reference['anchor']
+    for group in record['official_attributes']:
+        if _text(group['name']) != 'Footnote':
+            continue
+        for item in group['lists']:
+            values = {_text(value['name']): _text(value['value']) for value in item['values']}
+            if _words(values.get('body', '')) != expected or not values.get('refList'):
+                continue
+            assert values['refList'] == reference.get('attrs', {}).get('refList') or values['refList'] in {
+                target['value'] for target in reference['targets']
+            }

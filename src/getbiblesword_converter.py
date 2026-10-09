@@ -74,11 +74,28 @@ def _merge_recovered_study(study, recovered, suffix):
 
     known = {signature(item): item for item in study["footnotes"] + study["references"]}
     _relabel_study(recovered, suffix)
-    aliases = {
-        item["id"]: known[signature(item)]["id"]
-        for item in recovered["footnotes"] + recovered["references"]
-        if signature(item) in known
-    }
+    aliases = {}
+    for item in recovered["footnotes"] + recovered["references"]:
+        existing = known.get(signature(item))
+        if existing is None and "targets" in item:
+            candidates = [reference for reference in study["references"]
+                          if " ".join(reference["text"].split()) == " ".join(item["text"].split())
+                          and reference["targets"]
+                          and all(target["scheme"] == "unresolved"
+                                  and " ".join(target["value"].split()) == " ".join(reference["text"].split())
+                                  for target in reference["targets"])]
+            # SWORD can reformat a body-derived refList (Psalm -> Psalms).
+            # Enrich a unique fallback reference, preserving its source anchor;
+            # explicit source destinations are never merged by visible label.
+            if len(candidates) == 1:
+                existing = candidates[0]
+                if any(target["scheme"] != "unresolved" for target in item["targets"]):
+                    existing["targets"] = item["targets"]
+        if existing is not None:
+            aliases[item["id"]] = existing["id"]
+            for key, value in item.get("attrs", {}).items():
+                existing.setdefault("attrs", {}).setdefault(key, value)
+            known[signature(existing)] = existing
 
     def relink(value):
         if isinstance(value, list):
