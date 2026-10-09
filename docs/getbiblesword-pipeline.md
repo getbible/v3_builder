@@ -179,10 +179,9 @@ upload, or publish the result.
 
 ## Candidate study extraction validation
 
-`.github/workflows/native-study-conformance.yml` is a read-only PR/manual job
-for the native study extraction changes. It checks out the immutable
-`getbible/getbiblesword` commit
-`30c275cc63b79f2d5416493c10d9b80312cb9e91`, builds its pinned SWORD dependency
+[`.github/workflows/native-study-conformance.yml`](../.github/workflows/native-study-conformance.yml)
+is a read-only PR/manual job for the native study extraction changes. It checks
+out the immutable `getbible/getbiblesword` commit pinned in that workflow, builds its pinned SWORD dependency
 and Release CLI, and runs Builder's real-module integration suite with
 `GETBIBLESWORD_REQUIRE_NORMALIZED=1`. Candidate validation therefore requires the
 new normalized-source projection, alongside the ordinary stream integrity,
