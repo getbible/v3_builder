@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "token.schema.json",
   "title": "Token",
-  "description": "One word-level token of a verse or title. Tokens are listed in reading order. `word_start` and `word_end` locate the token in the whitespace-separated words of the display text (1-based, inclusive; 0 when the token could not be located). Every other member is an attribute of the source OSIS w element: multi-valued attributes are grouped by scheme and `src` is split into positions, any other attribute is kept as its string value.",
+  "description": "One word-level token of a verse or title. Tokens are listed in reading order. `word_start` and `word_end` locate the token in the whitespace-separated words of the display text (1-based, inclusive; 0 when the token could not be located). Every other member is an attribute of the source word element (OSIS w or its equivalent): multi-valued attributes are grouped by scheme and `src` is split into positions, any other attribute is kept as its string value.",
   "type": "object",
   "properties": {
     "token": {

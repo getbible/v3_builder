@@ -27,9 +27,9 @@ def _validate(description, schema_name, document):
     ("raw", "stripped", "field", "expected"),
     [
         ("<p>Source preface.</p>", "Source preface.", "introduction",
-         [{"text": "Source preface."}]),
+         [{"text": "Source preface.", "content": [{"tag": "p", "children": ["Source preface."]}]}]),
         ('<title type="main">Source title</title>', "Source title", "titles",
-         [{"type": "main", "text": "Source title"}]),
+         [{"type": "main", "text": "Source title", "attrs": {"type": "main"}}]),
     ],
 )
 def test_content_without_verses_survives_conversion_hashing_and_schemas(

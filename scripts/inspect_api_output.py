@@ -48,10 +48,11 @@ TARGET_BOOKS = (
     ),
 )
 TARGET_CHAPTERS = tuple(range(1, 6))
-FORBIDDEN_SOURCE_FIELDS = frozenset({"source", "source_contract"})
+FORBIDDEN_SOURCE_FIELDS = frozenset({"source", "source_contract", "normalized_raw"})
 EDITORIAL_HEADING_FIELDS = frozenset(
     {"order", "type", "anchor", "text", "heading_type", "canonical"}
 )
+EDITORIAL_HEADING_OPTIONAL_FIELDS = frozenset({"tokens", "spans", "content", "attrs", "subtype"})
 EDITORIAL_PARAGRAPH_FIELDS = frozenset({"order", "type", "start", "end"})
 EDITORIAL_ANCHOR_FIELDS = frozenset({"verse", "edge"})
 OPENAPI_VERSION = "3.1.0"
@@ -62,7 +63,7 @@ OPENAPI_SCHEMAS = frozenset(
     {
         "translation", "book", "chapter", "translations-index", "books-index",
         "chapters-index", "checksum-index", "checksum", "verse", "token", "span",
-        "editorial", "title", "introduction",
+        "editorial", "title", "introduction", "reference", "anchor", "content",
     }
 )
 _VERSION_MOUNT = re.compile(r"^/v[0-9]+$")
@@ -214,6 +215,8 @@ def _require_no_source_envelopes(value: Any, location: str) -> None:
                 )
             pending.extend(
                 (child, f"{current_path}.{key}") for key, child in current.items()
+                if not (key == "attrs" and isinstance(child, dict)
+                        and all(isinstance(value, str) for value in child.values()))
             )
         elif isinstance(current, list):
             pending.extend(
@@ -297,6 +300,141 @@ def _semantic_summary(
     return result
 
 
+def _string_attributes(value: Any, location: str) -> None:
+    if not isinstance(value, dict) or not all(isinstance(item, str) for item in value.values()):
+        raise InspectionError(f"{location} must contain string-valued attributes")
+
+
+def _validate_content(value: Any, location: str, notes: set[str], references: set[str]) -> None:
+    """Validate recursive source trees and their chapter-local links."""
+    if not isinstance(value, list):
+        raise InspectionError(f"{location} content must be an array")
+    pending = [(item, f"{location}[{index}]") for index, item in enumerate(value)]
+    while pending:
+        node, node_location = pending.pop()
+        if isinstance(node, str):
+            continue
+        if not isinstance(node, dict) or not {"tag", "children"}.issubset(node) or set(node) - {"tag", "children", "attrs"}:
+            raise InspectionError(f"{node_location} must be text or a content element")
+        if not isinstance(node["tag"], str) or not node["tag"]:
+            raise InspectionError(f"{node_location} tag must be a non-empty string")
+        if not isinstance(node["children"], list):
+            raise InspectionError(f"{node_location} children must be an array")
+        attrs = node.get("attrs", {})
+        _string_attributes(attrs, node_location)
+        for key, available in (("reference_id", references), ("footnote_id", notes)):
+            if key in attrs and attrs[key] not in available:
+                raise InspectionError(f"{node_location} has a dangling {key}")
+        if "footnote_id" in attrs and node["children"]:
+            raise InspectionError(f"{node_location} duplicates a footnote body")
+        pending.extend((child, f"{node_location}.children[{index}]") for index, child in enumerate(node["children"]))
+
+
+def _study_ids(items: Sequence[Any], location: str) -> set[str]:
+    ids: set[str] = set()
+    for item in items:
+        identifier = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(identifier, str) or not identifier or identifier in ids:
+            raise InspectionError(f"{location} IDs must be non-empty and unique")
+        ids.add(identifier)
+    return ids
+
+
+def _validate_study_anchor(anchor: Any, chapter: dict[str, Any], notes: dict[str, Any], location: str) -> None:
+    if not isinstance(anchor, dict) or "verse" not in anchor or set(anchor) - {"verse", "offset", "alignment", "note", "note_offset", "scope", "introduction"}:
+        raise InspectionError(f"{location} has invalid study anchor fields")
+    verses = {verse["verse"]: verse["text"] for verse in chapter["verses"]}
+    verse = anchor["verse"]
+    scope = anchor.get("scope")
+    if scope == "introduction":
+        index = anchor.get("introduction")
+        introductions = chapter.get("introduction", [])
+        if (
+            type(verse) is not int or verse != 0 or type(index) is not int
+            or not isinstance(introductions, list) or not 0 <= index < len(introductions)
+            or not isinstance(introductions[index], dict)
+            or not isinstance(introductions[index].get("text"), str)
+        ):
+            raise InspectionError(f"{location} must locate a chapter introduction")
+        anchor_text = introductions[index]["text"]
+    elif scope == "source":
+        if type(verse) is not int or verse < 1 or verse in verses or "introduction" in anchor or "offset" in anchor or anchor.get("alignment") != "unresolved":
+            raise InspectionError(f"{location} source anchor must identify an unpublished verse with unresolved alignment")
+        anchor_text = ""
+    elif scope is None:
+        if type(verse) is not int or verse not in verses or "introduction" in anchor:
+            raise InspectionError(f"{location} anchor verse must reference an emitted verse")
+        anchor_text = verses[verse]
+    else:
+        raise InspectionError(f"{location} study anchor scope is invalid")
+    if "offset" in anchor:
+        offset = anchor["offset"]
+        if "alignment" in anchor or type(offset) is not int or not 0 <= offset <= len(anchor_text):
+            raise InspectionError(f"{location} offset must be a valid Unicode code-point position")
+    elif anchor.get("alignment") != "unresolved":
+        raise InspectionError(f"{location} must supply offset or unresolved alignment")
+    if ("note" in anchor) != ("note_offset" in anchor):
+        raise InspectionError(f"{location} note and note_offset must occur together")
+    if "note" in anchor:
+        note = notes.get(anchor["note"]) if isinstance(anchor["note"], str) else None
+        offset = anchor["note_offset"]
+        if (
+            note is None or not isinstance(note.get("text"), str)
+            or not isinstance(note.get("anchor"), dict)
+            or type(offset) is not int or not 0 <= offset <= len(note["text"])
+        ):
+            raise InspectionError(f"{location} note_offset must locate an existing footnote")
+        if any(note["anchor"].get(key) != anchor.get(key) for key in ("verse", "scope", "introduction")):
+            raise InspectionError(f"{location} note must belong to the anchor source location")
+
+
+def _validate_references(path: Path, chapter: dict[str, Any]) -> dict[str, Any]:
+    reference = chapter.get("reference")
+    if reference is None:
+        return {"entry_count": 0, "target_count": 0}
+    if not isinstance(reference, dict) or set(reference) != {"items"} or not isinstance(reference["items"], list) or not reference["items"]:
+        raise InspectionError(f"{path} reference must be an object with non-empty items")
+    items = reference["items"]
+    references = _study_ids(items, f"{path} reference")
+    notes = {item["id"]: item for item in chapter.get("editorial", []) if item.get("type") == "footnote"}
+    targets_count = 0
+    for index, item in enumerate(items):
+        location = f"{path} reference.items[{index}]"
+        required = {"id", "anchor", "text", "targets"}
+        if not required.issubset(item) or set(item) - required - {"content", "attrs"}:
+            raise InspectionError(f"{location} has invalid reference fields")
+        _validate_study_anchor(item["anchor"], chapter, notes, location)
+        if not isinstance(item["text"], str) or not isinstance(item["targets"], list):
+            raise InspectionError(f"{location} requires text and a targets array")
+        if "content" in item:
+            _validate_content(item["content"], location, set(notes), references)
+        if "attrs" in item:
+            _string_attributes(item["attrs"], location)
+        for target in item["targets"]:
+            if not isinstance(target, dict) or not {"value", "scheme"}.issubset(target) or set(target) - {"value", "scheme", "book", "chapter", "verse", "end"}:
+                raise InspectionError(f"{location} has invalid target fields")
+            if (
+                not isinstance(target["value"], str) or not target["value"]
+                or not isinstance(target["scheme"], str)
+                or target["scheme"] not in {"osis", "uri", "local", "unresolved"}
+            ):
+                raise InspectionError(f"{location} target value or scheme is invalid")
+            addresses = [target]
+            if "end" in target:
+                end = target["end"]
+                if not isinstance(end, dict) or "book" not in end or set(end) - {"book", "chapter", "verse"} or "book" not in target:
+                    raise InspectionError(f"{location} target end requires book addresses")
+                addresses.append(end)
+            for address in addresses:
+                for key in ("book", "chapter", "verse"):
+                    if key in address and (type(address[key]) is not int or address[key] < 1 or (key == "book" and address[key] > 281474977710655)):
+                        raise InspectionError(f"{location} target {key} must be a positive address")
+                if ("verse" in address and "chapter" not in address) or ("chapter" in address and "book" not in address):
+                    raise InspectionError(f"{location} target address is incomplete")
+            targets_count += 1
+    return {"entry_count": len(items), "target_count": targets_count}
+
+
 def _validate_editorial(
     path: Path,
     chapter: dict[str, Any],
@@ -310,6 +448,8 @@ def _validate_editorial(
             "entry_count": 0,
             "heading_count": 0,
             "paragraph_count": 0,
+            "footnote_count": 0,
+            "structure_count": 0,
             "entries": [],
         }
     if not isinstance(editorial, list) or not editorial:
@@ -319,9 +459,16 @@ def _validate_editorial(
         verse_number: position
         for position, verse_number in enumerate(verse_numbers)
     }
+    notes_list = [item for item in editorial if isinstance(item, dict) and item.get("type") == "footnote"]
+    note_ids = _study_ids(notes_list, f"{path} editorial footnotes")
+    notes = {item["id"]: item for item in notes_list}
+    reference = chapter.get("reference", {})
+    reference_items = reference.get("items", []) if isinstance(reference, dict) else []
+    reference_ids = _study_ids(reference_items, f"{path} reference") if isinstance(reference_items, list) else set()
     heading_count = 0
+    structure_count = 0
     paragraph_ranges: list[tuple[int, int]] = []
-    reading_positions: list[tuple[int, int]] = []
+    reading_positions: list[tuple[int, int, int, int]] = []
     for expected_order, entry in enumerate(editorial):
         location = f"{path} editorial[{expected_order}]"
         if not isinstance(entry, dict):
@@ -333,9 +480,9 @@ def _validate_editorial(
 
         entry_type = entry.get("type")
         if entry_type == "heading":
-            if set(entry) != EDITORIAL_HEADING_FIELDS:
+            if not EDITORIAL_HEADING_FIELDS.issubset(entry) or set(entry) - EDITORIAL_HEADING_FIELDS - EDITORIAL_HEADING_OPTIONAL_FIELDS:
                 raise InspectionError(
-                    f"{location} heading fields must be exactly "
+                    f"{location} heading fields must include "
                     f"{sorted(EDITORIAL_HEADING_FIELDS)}"
                 )
             anchor = entry["anchor"]
@@ -362,8 +509,16 @@ def _validate_editorial(
                 )
             if type(entry["canonical"]) is not bool:
                 raise InspectionError(f"{location} canonical must be boolean")
+            if "content" in entry:
+                _validate_content(entry["content"], location, note_ids, reference_ids)
+            if "attrs" in entry:
+                _string_attributes(entry["attrs"], location)
+            if "subtype" in entry and not isinstance(entry["subtype"], str):
+                raise InspectionError(f"{location} subtype must be a string")
+            if ("tokens" in entry) != ("spans" in entry) or any(not isinstance(entry[key], list) for key in ("tokens", "spans") if key in entry):
+                raise InspectionError(f"{location} tokens and spans must be arrays supplied together")
             heading_count += 1
-            reading_positions.append((verse_positions[anchor_verse], 0))
+            reading_positions.append((anchor_verse, 0, 0, 0))
             continue
 
         if entry_type == "paragraph":
@@ -385,12 +540,30 @@ def _validate_editorial(
             if verse_positions[end] < verse_positions[start]:
                 raise InspectionError(f"{location} end precedes start")
             paragraph_ranges.append((start, end))
-            reading_positions.append((verse_positions[start], 1))
+            reading_positions.append((start, 0, 1, 0))
             continue
 
-        raise InspectionError(
-            f"{location} type must be 'heading' or 'paragraph'"
-        )
+        if entry_type in {"footnote", "structure"}:
+            required = {"order", "type", "anchor", "content"}
+            optional: set[str] = set()
+            if entry_type == "footnote":
+                required |= {"id", "text"}
+                optional.add("attrs")
+                if not isinstance(entry.get("text"), str):
+                    raise InspectionError(f"{location} footnote text must be a string")
+            else:
+                structure_count += 1
+            if not required.issubset(entry) or set(entry) - required - optional:
+                raise InspectionError(f"{location} has invalid {entry_type} fields")
+            _validate_study_anchor(entry["anchor"], chapter, notes, location)
+            _validate_content(entry["content"], location, note_ids, reference_ids)
+            if "attrs" in entry:
+                _string_attributes(entry["attrs"], location)
+            anchor = entry["anchor"]
+            reading_positions.append((anchor["verse"], anchor.get("introduction", 0), 2, anchor.get("offset", 0)))
+            continue
+
+        raise InspectionError(f"{location} has an unsupported editorial type")
 
     if reading_positions != sorted(reading_positions):
         raise InspectionError(
@@ -418,6 +591,8 @@ def _validate_editorial(
         "entry_count": len(editorial),
         "heading_count": heading_count,
         "paragraph_count": len(paragraph_ranges),
+        "footnote_count": len(notes),
+        "structure_count": structure_count,
         "entries": editorial,
     }
 
@@ -461,6 +636,8 @@ def _chapter_summary(
     verses_with_tokens = 0
     verses_with_spans_field = 0
     for verse in verses:
+        if "reference" in verse:
+            raise InspectionError(f"{path} reference data must belong to the chapter")
         if "titles" in verse:
             raise InspectionError(
                 f"{path} verse {verse['verse']} retains redundant titles "
@@ -505,6 +682,17 @@ def _chapter_summary(
 
     span_tags = Counter(str(span.get("tag", "<missing>")) for span in span_records)
     editorial_summary = _validate_editorial(path, chapter_data, verse_numbers)
+    reference_summary = _validate_references(path, chapter_data)
+    note_ids = {item["id"] for item in chapter_data.get("editorial", []) if item["type"] == "footnote"}
+    reference_ids = {item["id"] for item in chapter_data.get("reference", {}).get("items", [])}
+    for index, introduction in enumerate(chapter_data.get("introduction", [])):
+        location = f"{path} introduction[{index}]"
+        if not isinstance(introduction, dict) or not isinstance(introduction.get("text"), str):
+            raise InspectionError(f"{location} must contain introduction text")
+        if "content" in introduction:
+            _validate_content(introduction["content"], location, note_ids, reference_ids)
+        if not introduction["text"] and not introduction.get("content"):
+            raise InspectionError(f"{location} must retain text or source content")
     paragraph_markers = _semantic_summary(chapter_data, verses, "paragraph")
     heading_markers = _semantic_summary(chapter_data, verses, "heading")
     summary = {
@@ -530,6 +718,7 @@ def _chapter_summary(
             "span_field_profiles": _field_profiles(span_records),
         },
         "editorial": editorial_summary,
+        "reference": reference_summary,
         "paragraph_boundaries": paragraph_markers,
         "headings_or_titles": heading_markers,
     }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "editorial.schema.json",
   "title": "Editorial",
-  "description": "The reading layout of one chapter, in reading order. A heading is anchored before a verse; a paragraph is an inclusive range of verse numbers. `order` is the contiguous zero-based position of the entry. When paragraph entries are present they cover every verse of the chapter contiguously, from its first verse to its last. The array is absent when the chapter has neither headings nor explicit paragraph markers.",
+  "description": "The source reading layout of one chapter in reading order. Existing headings remain anchored before a verse, and paragraphs remain inclusive verse-number ranges. Footnotes retain complete bodies and internal structure; structure entries retain additional source constructs. order is contiguous and zero-based across every entry. Paragraph entries, when present, cover every emitted verse contiguously. Absent when there are no entries.",
   "type": "array",
   "minItems": 1,
   "items": {
@@ -12,6 +12,12 @@
       },
       {
         "$ref": "#/$defs/paragraph"
+      },
+      {
+        "$ref": "#/$defs/footnote"
+      },
+      {
+        "$ref": "#/$defs/structure"
       }
     ]
   },
@@ -54,11 +60,38 @@
         "heading_type": {
           "type": "string",
           "minLength": 1,
-          "description": "The OSIS title type, or unspecified when the source supplies none."
+          "description": "The source title type in OSIS-equivalent semantics, or unspecified when the source supplies none."
         },
         "canonical": {
           "type": "boolean",
           "description": "True only when the source explicitly marks the heading canonical."
+        },
+        "content": {
+          "$ref": "content.schema.json"
+        },
+        "attrs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Source attributes retained as strings. Content links use reference_id or footnote_id to identify chapter study entries."
+        },
+        "subtype": {
+          "type": "string"
+        },
+        "tokens": {
+          "type": "array",
+          "items": {
+            "$ref": "token.schema.json"
+          },
+          "description": "Title-local word tokens; positions address heading text."
+        },
+        "spans": {
+          "type": "array",
+          "items": {
+            "$ref": "span.schema.json"
+          },
+          "description": "Title-local annotations; ranges address heading tokens and text."
         }
       },
       "required": [
@@ -69,7 +102,15 @@
         "heading_type",
         "canonical"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "dependentRequired": {
+        "tokens": [
+          "spans"
+        ],
+        "spans": [
+          "tokens"
+        ]
+      }
     },
     "paragraph": {
       "title": "Paragraph",
@@ -99,6 +140,74 @@
         "type",
         "start",
         "end"
+      ],
+      "additionalProperties": false
+    },
+    "footnote": {
+      "title": "Footnote",
+      "type": "object",
+      "properties": {
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "anchor": {
+          "$ref": "anchor.schema.json"
+        },
+        "content": {
+          "$ref": "content.schema.json"
+        },
+        "type": {
+          "const": "footnote"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Source attributes retained as strings. Content links use reference_id or footnote_id to identify chapter study entries."
+        }
+      },
+      "required": [
+        "order",
+        "type",
+        "id",
+        "anchor",
+        "text",
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "structure": {
+      "title": "Source structure",
+      "type": "object",
+      "properties": {
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "anchor": {
+          "$ref": "anchor.schema.json"
+        },
+        "content": {
+          "$ref": "content.schema.json"
+        },
+        "type": {
+          "const": "structure"
+        }
+      },
+      "required": [
+        "order",
+        "type",
+        "anchor",
+        "content"
       ],
       "additionalProperties": false
     }

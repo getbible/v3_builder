@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "content.schema.json",
+  "title": "Source content",
+  "description": "Ordered source content preserving text, nested elements, and attributes. The tags use OSIS-equivalent semantics for supported source formats; unrecognized source constructs are retained. Reference bodies belong to chapter reference; nested footnote bodies belong to editorial footnotes. Their content nodes link by reference_id or footnote_id in attrs. This is structural content, never executable HTML.",
+  "type": "array",
+  "items": {
+    "oneOf": [
+      {
+        "type": "string"
+      },
+      {
+        "$ref": "#/$defs/element"
+      }
+    ]
+  },
+  "$defs": {
+    "element": {
+      "type": "object",
+      "properties": {
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attrs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Source attributes retained as strings. Content links use reference_id or footnote_id to identify chapter study entries."
+        },
+        "children": {
+          "$ref": "content.schema.json"
+        }
+      },
+      "required": [
+        "tag",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

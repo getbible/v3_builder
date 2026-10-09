@@ -407,3 +407,77 @@ def test_inspection_fails_when_a_sha_sibling_is_stale(generated_kjv):
 
     with pytest.raises(InspectionError, match="translations.json: .sha does not match"):
         inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def _add_study_content(scripture):
+    path = scripture / "kjv" / "19" / "1.json"
+    chapter = json.loads(path.read_text(encoding="utf-8"))
+    chapter["editorial"].append({
+        "order": 2, "type": "footnote", "id": "fn-1-1", "anchor": {"verse": 1, "offset": 4},
+        "text": "Note text", "content": [{"tag": "p", "attrs": {"source": "retained source attribute"}, "children": ["Note text", {"tag": "reference", "attrs": {"reference_id": "ref-1-1"}, "children": ["Gen 1:2"]}]}],
+    })
+    chapter["reference"] = {"items": [{
+        "id": "ref-1-1", "anchor": {"verse": 1, "offset": 4, "note": "fn-1-1", "note_offset": 9},
+        "text": "Gen 1:2", "targets": [{"value": "Gen.1.2", "scheme": "osis", "book": 1, "chapter": 1, "verse": 2}],
+        "content": ["Gen 1:2"],
+    }]}
+    _write_json(path, chapter)
+    return path, chapter
+
+
+def test_inspection_validates_notes_references_links_and_codepoint_anchors(generated_kjv):
+    scripture, hashes = generated_kjv
+    path, chapter = _add_study_content(scripture)
+    # Combining marks count separately; a non-BMP character still counts once.
+    chapter["verses"][0]["text"] = "😀e\u0301x"
+    _write_json(path, chapter)
+    result = inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+    first = result["books"][0]["chapters"][0]
+    assert first["editorial"]["footnote_count"] == 1
+    assert first["reference"] == {"entry_count": 1, "target_count": 1}
+
+
+@pytest.mark.parametrize("mutate,message", [
+    (lambda c: c["editorial"][2]["anchor"].update(offset=100), "Unicode code-point"),
+    (lambda c: c["editorial"][2]["anchor"].update(alignment="unresolved"), "Unicode code-point"),
+    (lambda c: c["reference"]["items"][0]["anchor"].update(note_offset=100), "note_offset"),
+    (lambda c: c["reference"]["items"][0]["anchor"].update(note="missing"), "note_offset"),
+    (lambda c: c["reference"]["items"].append(c["reference"]["items"][0].copy()), "IDs must be"),
+    (lambda c: c.pop("reference"), "dangling reference_id"),
+    (lambda c: c["reference"]["items"][0]["targets"][0].pop("book"), "address is incomplete"),
+    (lambda c: c["editorial"][2]["content"][0].update(children={}), "children must be an array"),
+    (lambda c: c["verses"][0].update(reference={"items": []}), "must belong to the chapter"),
+    (lambda c: c["editorial"][1].update(content=[]), "paragraph fields must be exactly"),
+])
+def test_inspection_rejects_corrupt_study_relationships(generated_kjv, mutate, message):
+    scripture, hashes = generated_kjv
+    path, chapter = _add_study_content(scripture)
+    mutate(chapter)
+    _write_json(path, chapter)
+    with pytest.raises(InspectionError, match=message):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+
+
+def test_inspection_preserves_introduction_and_source_only_material(generated_kjv):
+    scripture, hashes = generated_kjv
+    path, chapter = _add_study_content(scripture)
+    chapter["introduction"] = [{"text": "Preface"}]
+    note = chapter["editorial"].pop()
+    note["anchor"] = {"verse": 0, "scope": "introduction", "introduction": 0, "offset": 3}
+    chapter["reference"]["items"][0]["anchor"] = {**note["anchor"], "note": note["id"], "note_offset": 0}
+    chapter["editorial"].insert(0, note)
+    chapter["editorial"].append({"type": "structure", "anchor": {"verse": 3, "scope": "source", "alignment": "unresolved"}, "content": [{"tag": "title", "children": ["Closing heading"]}]})
+    for order, item in enumerate(chapter["editorial"]):
+        item["order"] = order
+    _write_json(path, chapter)
+    result = inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)
+    assert result["books"][0]["chapters"][0]["editorial"]["structure_count"] == 1
+
+
+def test_inspection_rejects_dangling_study_links_in_introductions(generated_kjv):
+    scripture, hashes = generated_kjv
+    path, chapter = _add_study_content(scripture)
+    chapter["introduction"] = [{"text": "Preface", "content": [{"tag": "reference", "attrs": {"reference_id": "missing"}, "children": []}]}]
+    _write_json(path, chapter)
+    with pytest.raises(InspectionError, match="dangling reference_id"):
+        inspect_api(scripture, [scripture, hashes], size_limit_bytes=1024 * 1024)

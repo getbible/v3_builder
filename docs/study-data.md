@@ -13,7 +13,8 @@ The implementation preserves source headings and study content as follows:
   Cross-reference bodies and targets belong here, including references occurring
   inside a footnote. They are not placed in verse fields or mixed into editorial.
 - New anchors use a verse number and zero-based Unicode code-point offset into
-  that verse's published text. Note-local references additionally identify their
+  that verse's published text; unresolved alignment omits the offset. Explicit
+  introduction and source-only scopes preserve material without inventing verses. Note-local references additionally identify their
   note and offset within its text. Existing heading anchors remain unchanged.
 - Source-format adapters map OSIS, ThML, GBF, TEI and plain text into common
   semantics. Source attributes and unrecognized constructs remain inspectable;
@@ -26,3 +27,8 @@ Regression fixtures cover source-to-display alignment, quotation milestones,
 nested annotations, note-local structure, lexical alternatives, source formats,
 encoding, references and repeated-build determinism. Real-module validation and
 JSON Schema validation protect the complete generated tree.
+
+The generated `openapi.json` embeds the complete additive contract, including
+recursive content and anchor schemas. Existing consumers may continue reading
+unchanged verse, heading and paragraph fields; new consumers can reconstruct
+note-local structure and cross-reference relationships from the added fields.
