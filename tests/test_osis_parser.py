@@ -1550,3 +1550,32 @@ class TestSourceMetadataCompleteness:
         raw = '<title type="section" level="1">Heading</title><title type="section" level="2">Heading</title>'
         titles = parse_osis_semantics(raw)['titles']
         assert [title['attrs']['level'] for title in titles] == ['1', '2']
+
+
+class TestSwordDisplayCaseAlignment:
+    def test_divine_name_uppercase_keeps_nested_token_and_span_positions(self):
+        raw = '<w lemma="strong:H3068">the <divineName>Lord</divineName></w> spoke'
+        result = parse_osis_verse(raw, 'the LORD spoke')
+        token = result['tokens'][1]
+        span = find_span(result['spans'], 'divineName')
+        assert token['token'] == 'Lord'
+        assert (token['word_start'], token['word_end']) == (2, 2)
+        assert (span['word_start'], span['word_end']) == (2, 2)
+
+    def test_case_changes_do_not_shift_repeated_unmarked_words(self):
+        raw = 'lord <w><divineName>Lord</divineName></w> lord <w>Lord</w>'
+        result = parse_osis_verse(raw, 'LORD LORD LORD LORD')
+        assert [token['word_start'] for token in result['tokens']] == [2, 4]
+        assert find_span(result['spans'], 'divineName')['word_start'] == 2
+
+    def test_same_character_count_non_ascii_case_change_keeps_offsets(self):
+        result = parse_osis_verse('the <w>ẞ</w>', 'THE ß')
+        assert result['tokens'][0]['word_start'] == 2
+
+    def test_expanding_unicode_fold_does_not_invent_a_character_mapping(self):
+        diagnostics = []
+        result = parse_osis_verse('the <w>Straße</w> ss', 'THE STRASSE SS',
+                                 diagnostics=diagnostics)
+        assert result['tokens'][0]['word_start'] == 0
+        assert result['tokens'][0]['word_end'] == 0
+        assert diagnostics[0]['code'] == 'unaligned_annotation'

@@ -70,6 +70,19 @@ def test_native_normalized_raw_can_supply_display_when_normalized_stripped_is_nu
     assert _entry_text(item, 'OSIS', 'SCSU') == 'Ё'
 
 
+def test_invalid_native_stripping_recovers_the_intact_source_apostrophe():
+    # KJV Exod.9.29: SWORD uppercases inside divineName byte by byte and
+    # corrupts a curly apostrophe. Even an invalid advertised normalized view
+    # must not replace the valid source with mojibake or abort this module.
+    raw = '<divineName>Lord’s</divineName>'.encode()
+    item = record(raw, b'LORD\xc2\x80\x99S')
+    item['normalized_raw'] = bv(raw.decode())
+    item['normalized_stripped'] = item['stripped']
+    diagnostics = []
+    assert _entry_text(item, 'OSIS', 'UTF-8', diagnostics=diagnostics) == 'Lord’s'
+    assert [item['code'] for item in diagnostics] == ['source.normalized_stripped_invalid']
+
+
 @pytest.mark.parametrize(('encoding', 'data', 'expected'), [
     ('UTF-8', 'λόγος café'.encode(), 'λόγος café'),
     ('UTF-8', 'λόγος '.encode() + b'caf\xe9', 'λόγος café'),

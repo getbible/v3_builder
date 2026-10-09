@@ -255,3 +255,23 @@ def test_real_study_links_resolve_and_documents_agree(real_study_samples):
             book_chapter = next(item for item in book_file['chapters'] if item['chapter'] == chapter['chapter'])
             for field in ('editorial', 'reference'):
                 assert standalone.get(field) == chapter.get(field) == book_chapter.get(field)
+
+
+def test_real_divine_name_apostrophe_survives_native_projection_and_publication(converted_modules):
+    """SWORD's bytewise divine-name uppercasing corrupted a real curly quote."""
+    module = converted_modules['kjv']
+    record = next(record for record in _entries(module)
+                  if _text(record['scope']['osis_reference']) == 'Exod.9.29')
+    source = _text(record.get('normalized_raw') or record['raw'])
+    assert 'Lord’s' in source, 'The source apostrophe is an authoritative Unicode character'
+    _, chapter = _chapter(module, record)
+    verse = next(item for item in chapter['verses'] if item['verse'] == 29)
+    assert '’' in verse['text']
+    assert '\ufffd' not in verse['text']
+    assert not any(0x80 <= ord(character) <= 0x9f for character in verse['text'])
+    assert 'â' not in verse['text'] and 'Â' not in verse['text']
+    normalized = record.get('normalized_stripped')
+    if normalized is not None:
+        # Native may explicitly omit a broken projection. Any projection it
+        # does supply must actually be Unicode and retain the punctuation.
+        assert '’' in _text(normalized)
