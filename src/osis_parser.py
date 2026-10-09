@@ -754,7 +754,13 @@ def _character_alignment(source, clean_text):
     if raw == clean:
         mapping = dict(enumerate(range(len(raw))))
     else:
-        for block in SequenceMatcher(None, raw, clean, autojunk=False).get_matching_blocks():
+        # SWORD can uppercase divine names in its display projection. Compare
+        # one case-folded key per original character, never a case-folded whole
+        # string: expansions such as ß -> ss must not shift Unicode offsets or
+        # invent a one-to-many character correspondence.
+        raw_keys = [character.casefold() for character in raw]
+        clean_keys = [character.casefold() for character in clean]
+        for block in SequenceMatcher(None, raw_keys, clean_keys, autojunk=False).get_matching_blocks():
             mapping.update((block.a + i, block.b + i) for i in range(block.size))
     return raw_positions, clean_positions, mapping
 

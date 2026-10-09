@@ -28,7 +28,7 @@ jobs:
         with:
           repository: getbible/getbiblesword
           # getbiblesword PR 13: test source only; production follows its release policy.
-          ref: 30c275cc63b79f2d5416493c10d9b80312cb9e91
+          ref: 561f2661681e8e5ec8dbedd1ada63fd1257d77aa
           path: .native-study
           persist-credentials: false
       - name: Set up Python

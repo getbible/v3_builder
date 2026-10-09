@@ -100,7 +100,8 @@ def _merge_recovered_study(study, recovered, suffix):
             item["anchor"]["alignment"] = "unresolved"
         study[field].extend(recovered[field])
         added = added or bool(recovered[field])
-    study["diagnostics"].extend(recovered["diagnostics"])
+    if added:
+        study["diagnostics"].extend(recovered["diagnostics"])
     return added
 
 
@@ -193,7 +194,7 @@ def _utf8_text(value: Any, location: str) -> str:
     return byte_value_text(value, location=location)
 
 
-def _entry_text(record: dict[str, Any], markup: str, encoding: str = "") -> str:
+def _entry_text(record: dict[str, Any], markup: str, encoding: str = "", *, diagnostics=None) -> str:
     """Return display text without rejecting valid legacy module bytes.
 
     UTF-8 is preferred.  When an OSIS module has only a malformed stripped
@@ -206,7 +207,27 @@ def _entry_text(record: dict[str, Any], markup: str, encoding: str = "") -> str:
     """
 
     if record.get("normalized_stripped") is not None:
-        return _utf8_text(record["normalized_stripped"], "entry.normalized_stripped")
+        try:
+            return _utf8_text(record["normalized_stripped"], "entry.normalized_stripped")
+        except UnicodeError:
+            if diagnostics is not None:
+                diagnostics.append({
+                    "code": "source.normalized_stripped_invalid",
+                    "message": "Native stripped projection is not valid UTF-8; recovering display text from source.",
+                })
+            source, warnings = _source_projection(record, markup, encoding)
+            if diagnostics is not None:
+                diagnostics.extend(warnings)
+            plain = osis_plain_text(source) if source is not None else None
+            if plain is not None:
+                return plain
+    elif "normalized_stripped" in record and record.get("normalized_raw") is not None:
+        source, warnings = _source_projection(record, markup, encoding)
+        if diagnostics is not None:
+            diagnostics.extend(warnings)
+        plain = osis_plain_text(source) if source is not None else None
+        if plain is not None:
+            return plain
     label = "".join(character for character in encoding.lower() if character.isalnum())
     if label in {"utf16", "utf16le", "utf16be", "utf32", "utf32le", "utf32be", "scsu"}:
         source, _ = _source_projection(record, markup, encoding)
@@ -928,7 +949,7 @@ class GetBibleSwordConverter:
         semantics = _source_semantics(osis, record, markup)
         self._merge_semantics(target, semantics)
 
-        text = _entry_text(record, markup, self._encoding)
+        text = _entry_text(record, markup, self._encoding, diagnostics=diagnostics)
         visible_text = text.strip()
         title_texts = {
             title["text"]
@@ -1006,7 +1027,7 @@ class GetBibleSwordConverter:
         book_resolver: BookResolver | None = None,
     ) -> dict[str, Any] | None:
         diagnostics = diagnostics if diagnostics is not None else []
-        text = normalize_verse_text(_entry_text(record, markup, encoding))
+        text = normalize_verse_text(_entry_text(record, markup, encoding, diagnostics=diagnostics))
         osis, warnings = _source_projection(record, markup, encoding)
         diagnostics.extend(warnings)
         if not text.replace("[]", "").strip():
