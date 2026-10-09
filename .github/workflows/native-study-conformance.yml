@@ -1,0 +1,67 @@
+name: "Native Study Conformance"
+
+on:
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-study-conformance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate-integration:
+    name: "Study extraction with pinned native candidate"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Builder
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Checkout immutable native study candidate
+        uses: actions/checkout@v6
+        with:
+          repository: getbible/getbiblesword
+          # getbiblesword PR 13: test source only; production follows its release policy.
+          ref: 30c275cc63b79f2d5416493c10d9b80312cb9e91
+          path: .native-study
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install native and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            autoconf automake binutils build-essential cmake curl libbz2-dev \
+            libcurl4-openssl-dev libicu-dev liblzma-dev libtool ninja-build \
+            pkg-config zlib1g-dev
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Build pinned CrossWire SWORD
+        run: .native-study/scripts/build-sword.sh "$PWD/.local/sword"
+      - name: Build native study candidate
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/.local/sword/lib/pkgconfig
+        run: |
+          cmake -S .native-study -B .native-study/build/candidate -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DGETBIBLESWORD_BUILD_SHARED_LIBRARY=OFF
+          cmake --build .native-study/build/candidate --target getbiblesword --parallel
+          git -C .native-study rev-parse HEAD
+          .native-study/build/candidate/getbiblesword version
+          .native-study/build/candidate/getbiblesword contract
+      - name: Verify real-module study extraction and Builder output
+        env:
+          GETBIBLESWORD_BIN: ${{ github.workspace }}/.native-study/build/candidate/getbiblesword
+          GETBIBLESWORD_REQUIRE_NORMALIZED: "1"
+        run: >-
+          python -m pytest tests_integration/ -v --tb=short
+          --run-integration --integration-seed=20260718

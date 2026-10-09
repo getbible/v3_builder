@@ -201,7 +201,7 @@ def extract_study(raw_osis: str, display_text: str, verse: int, *, context: dict
         raw = element.get('osisRef')
         osis = raw is not None
         if raw is None:
-            raw = element.get('target') or element.get('passage') or element.get('href')
+            raw = element.get('target') or element.get('passage') or element.get('href') or element.get('refList')
         if raw is None:
             raw = _content_text(element)[0]
         # OSIS uses XML whitespace to separate targets. A native free-form

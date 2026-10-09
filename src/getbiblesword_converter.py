@@ -67,13 +67,75 @@ def _relabel_study(study, suffix):
     walk(study)
 
 
-def _supplement_study(study, record, markup, verse, text, *, book_resolver=None):
-    """Recover official note bodies absent from parsed source, without guessing anchors."""
+def _merge_recovered_study(study, recovered, suffix):
+    """Merge native-only annotations while retaining links to existing bodies."""
     def signature(item):
         return (" ".join(item["text"].split()), json.dumps(item.get("targets"), sort_keys=True))
 
     known = {signature(item): item for item in study["footnotes"] + study["references"]}
-    notes = _official_attributes(record).get("Footnote", {})
+    _relabel_study(recovered, suffix)
+    aliases = {
+        item["id"]: known[signature(item)]["id"]
+        for item in recovered["footnotes"] + recovered["references"]
+        if signature(item) in known
+    }
+
+    def relink(value):
+        if isinstance(value, list):
+            for child in value:
+                relink(child)
+        elif isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"footnote_id", "reference_id", "note"} and isinstance(child, str):
+                    value[key] = aliases.get(child, child)
+                else:
+                    relink(child)
+
+    relink(recovered)
+    added = False
+    for field in ("footnotes", "references"):
+        recovered[field] = [item for item in recovered[field] if item["id"] not in aliases]
+        for item in recovered[field]:
+            item["anchor"].pop("offset", None)
+            item["anchor"]["alignment"] = "unresolved"
+        study[field].extend(recovered[field])
+        added = added or bool(recovered[field])
+    study["diagnostics"].extend(recovered["diagnostics"])
+    return added
+
+
+def _supplement_study(study, record, markup, verse, text, *, book_resolver=None):
+    """Recover native-only heading/note bodies without guessing their anchors."""
+    attributes = _official_attributes(record)
+    known_titles = {title["text"] for title in study.get("title_content", [])}
+    for index, (identifier, body) in enumerate(_native_headings(attributes.get("Heading", {}))):
+        normalized, diagnostics = normalize_source(body, markup)
+        titles = parse_osis_semantics(normalized).get("titles", [])
+        if not titles:
+            heading_text = osis_plain_text(normalized)
+            if not heading_text or not heading_text.strip():
+                continue
+            titles = [{"text": heading_text.strip()}]
+            # SWORD may strip the original preverse wrapper while retaining
+            # its inline notes/references. Give that content its title scope.
+            normalized = "<title>" + normalized + "</title>"
+        if all(title["text"] in known_titles for title in titles):
+            continue
+        recovered = extract_study(normalized, text, verse,
+                                  context={"book_resolver": book_resolver})
+        recovered["title_content"] = [title for title in recovered.get("title_content", [])
+                                      if title["text"] not in known_titles]
+        added = _merge_recovered_study(study, recovered, f"-sword-heading-{index + 1}")
+        study.setdefault("title_content", []).extend(recovered["title_content"])
+        study["diagnostics"].extend(diagnostics)
+        known_titles.update(title["text"] for title in recovered["title_content"])
+        if added:
+            study["diagnostics"].append({
+                "code": "official_heading_anchor_unresolved",
+                "message": f"Recovered study annotations in SWORD heading {identifier}; no display offset was inferred.",
+            })
+
+    notes = attributes.get("Footnote", {})
     for index, (identifier, values) in enumerate(notes.items()):
         normalized_values = {key.lower(): value for key, value in values.items()}
         body = normalized_values.get("body", "")
@@ -90,35 +152,9 @@ def _supplement_study(study, record, markup, verse, text, *, book_resolver=None)
                 wrapper.set(key, value)
         recovered = extract_study(ET.tostring(wrapper, encoding="unicode"), text, verse,
                                   context={"book_resolver": book_resolver})
-        _relabel_study(recovered, f"-sword-{index + 1}")
-        aliases = {
-            item["id"]: known[signature(item)]["id"]
-            for item in recovered["footnotes"] + recovered["references"]
-            if signature(item) in known
-        }
-        def relink(value):
-            if isinstance(value, list):
-                for child in value:
-                    relink(child)
-            elif isinstance(value, dict):
-                for key, child in value.items():
-                    if key in {"footnote_id", "reference_id", "note"} and isinstance(child, str):
-                        value[key] = aliases.get(child, child)
-                    else:
-                        relink(child)
-        relink(recovered)
-        for field in ("footnotes", "references"):
-            recovered[field] = [item for item in recovered[field] if item["id"] not in aliases]
-        if not recovered["footnotes"] and not recovered["references"]:
-            continue
-        for item in recovered["footnotes"] + recovered["references"]:
-            item["anchor"].pop("offset", None)
-            item["anchor"]["alignment"] = "unresolved"
-        study["footnotes"].extend(recovered["footnotes"])
-        study["references"].extend(recovered["references"])
-        study["diagnostics"].extend(diagnostics + recovered["diagnostics"])
-        study["diagnostics"].append({"code": "official_note_anchor_unresolved", "message": f"Recovered SWORD footnote {identifier}; source supplies no recoverable display offset."})
-        known.update((signature(item), item) for item in recovered["footnotes"] + recovered["references"])
+        if _merge_recovered_study(study, recovered, f"-sword-{index + 1}"):
+            study["diagnostics"].extend(diagnostics)
+            study["diagnostics"].append({"code": "official_note_anchor_unresolved", "message": f"Recovered SWORD footnote {identifier}; source supplies no recoverable display offset."})
 
 
 class ConversionError(ValueError):
@@ -171,13 +207,24 @@ def _entry_text(record: dict[str, Any], markup: str, encoding: str = "") -> str:
 
     if record.get("normalized_stripped") is not None:
         return _utf8_text(record["normalized_stripped"], "entry.normalized_stripped")
-    if encoding.lower().replace("-", "") in {"latin1", "iso88591", "windows1252", "cp1252"}:
-        return decode_source(decode_byte_value(record["stripped"], location="entry.stripped"), encoding)
-    if encoding.lower().replace("-", "") in {"utf16", "utf16le", "utf16be", "scsu"}:
+    label = "".join(character for character in encoding.lower() if character.isalnum())
+    if label in {"utf16", "utf16le", "utf16be", "utf32", "utf32le", "utf32be", "scsu"}:
         source, _ = _source_projection(record, markup, encoding)
         plain = osis_plain_text(source) if source is not None else None
         if plain is not None:
             return plain
+        try:
+            return decode_source(decode_byte_value(record["stripped"], location="entry.stripped"), encoding)
+        except (UnicodeError, ValueError) as exc:
+            raise ConversionError(
+                f"Cannot decode entry {record.get('ordinal')} with encoding {encoding}; "
+                "a valid native UTF-8 projection is required"
+            ) from exc
+    if label not in {"", "utf8", "utf8sig"}:
+        try:
+            return decode_source(decode_byte_value(record["stripped"], location="entry.stripped"), encoding)
+        except (UnicodeError, ValueError) as exc:
+            raise ConversionError(f"Cannot decode entry {record.get('ordinal')} with encoding {encoding}: {exc}") from exc
     try:
         return _utf8_text(record.get("stripped"), "entry.stripped")
     except UnicodeDecodeError:
@@ -230,20 +277,27 @@ def _official_attributes(record: dict[str, Any]) -> dict[str, dict[str, dict[str
     return attributes
 
 
+def _native_headings(attributes):
+    """Read both heading groups populated by SWORD's source filters."""
+    for position in ("Preverse", "Interverse"):
+        yield from sorted(attributes.get(position, {}).items(), key=lambda item: (
+            not item[0].isdigit(), int(item[0]) if item[0].isdigit() else item[0]
+        ))
+
+
 def _source_semantics(source, record, markup):
     """Prefer source titles, supplementing missing SWORD preverse headings."""
     semantics = parse_osis_semantics(source) if source else {}
     titles = semantics.setdefault("titles", [])
     existing = {title["text"]: title for title in titles}
     heading_attributes = _official_attributes(record).get("Heading", {})
-    headings = heading_attributes.get("Preverse", {})
-    for identifier, value in sorted(headings.items(), key=lambda item: (not item[0].isdigit(), int(item[0]) if item[0].isdigit() else item[0])):
+    for identifier, value in _native_headings(heading_attributes):
         normalized, _ = normalize_source(value, markup)
         recovered = parse_osis_semantics(normalized).get("titles", [])
         if not recovered:
-            text = osis_plain_text(normalized)
-            if text and text.strip():
-                recovered = [{"text": text.strip()}]
+            # Native preverse attributes can omit their outer title/div tag.
+            # Restore the title scope so inline tokens and study links survive.
+            recovered = parse_osis_semantics("<title>" + normalized + "</title>").get("titles", [])
         for title in recovered:
             attributes = heading_attributes.get(identifier, {})
             canonical = attributes.get("canonical", "").lower()
@@ -275,7 +329,10 @@ def _reconcile_title_content(semantics, study):
     """Heading trees link to the same chapter note/reference records."""
     available = list(study.get("title_content", []))
     for title in semantics.get("titles", []):
-        index = next((i for i, item in enumerate(available) if item["text"] == title["text"]), None)
+        index = next((i for i, item in enumerate(available)
+                      if item["text"] == title["text"]
+                      and all(title.get("attrs", {}).get(key) == value
+                              for key, value in item.get("attrs", {}).items())), None)
         if index is not None:
             item = available.pop(index)
             if "content" in title:
@@ -719,7 +776,10 @@ class GetBibleSwordConverter:
             source, warnings = _source_projection(record, markup, self._encoding)
             diagnostics.extend(warnings)
             semantics = _source_semantics(source, record, markup)
-            study = extract_study(source or "", "", verse_number, context={"book_resolver": self._book_resolver})
+            preserve_unparsed = any(item["code"] in {"unsupported_source_format", "unparsed_source_fragment"} for item in warnings)
+            study = extract_study(source or "", "", verse_number, context={
+                "book_resolver": self._book_resolver, "retain_content": preserve_unparsed,
+            })
             _supplement_study(study, record, markup, verse_number, "", book_resolver=self._book_resolver)
             _reconcile_title_content(semantics, study)
             for title in semantics.get("titles", []):
@@ -879,8 +939,8 @@ class GetBibleSwordConverter:
         # their useful title remains in raw OSIS.  Store actual prose as an
         # introduction, but do not duplicate a promoted title string.
         study = None
-        if osis and intro_scope == "chapter":
-            study = extract_study(osis, text, 0, context={"book_resolver": self._book_resolver, "retain_content": True})
+        if intro_scope == "chapter":
+            study = extract_study(osis or "", text, 0, context={"book_resolver": self._book_resolver, "retain_content": True})
             _supplement_study(study, record, markup, 0, text, book_resolver=self._book_resolver)
             _relabel_study(study, f"-intro-{len(target.get('introduction', []))}")
             _reconcile_title_content(semantics, study)
@@ -898,6 +958,20 @@ class GetBibleSwordConverter:
                     # Introductions have their own text space; preserve nested
                     # markup without reinterpreting it as verse content.
                     introduction["content"] = _content_children(root)
+            if not text and not introduction.get("content") and has_study:
+                # Native-only annotations still need a concrete introduction
+                # document for their introduction-scoped links. Preserve the
+                # recovered heading tree, or body links when only notes exist.
+                introduction["content"] = [
+                    {"tag": "title", "children": title["content"],
+                     **({"attrs": title["attrs"]} if title.get("attrs") else {})}
+                    for title in study.get("title_content", [])
+                ] or [
+                    {"tag": tag, "attrs": {link: item["id"]}, "children": []}
+                    for field, tag, link in (("footnotes", "note", "footnote_id"),
+                                             ("references", "reference", "reference_id"))
+                    for item in study[field] if "note" not in item["anchor"]
+                ]
             index = len(target.setdefault("introduction", []))
             target["introduction"].append(introduction)
             if study:

@@ -108,6 +108,8 @@ def converted_modules(
             "sword_name": sword_name,
             "abbreviation": abbreviation,
             "version_path": version_path,
+            "contract_path": str(contract),
+            "producer_version": summary.producer_version,
             "version_data": version_data,
             "output_dir": conversion_output_dir,
         }
