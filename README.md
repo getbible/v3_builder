@@ -20,7 +20,8 @@ official SWORD engine through the separately released
 - Verifies raw entries, SWORD projections, attributes, configuration sources, and
   artifacts as transport data before conversion.
 - Keeps the existing document shape and complete token/span fields while deriving
-  compact chapter editorial, paragraph, title, and introduction semantics.
+  chapter editorial, full footnotes, references, paragraph, title, and introduction
+  semantics with recursive source content.
 - Writes a `.sha` sibling beside every JSON document, the index and checksum
   documents included, so a reader can watch any document for changes.
 - Describes the generated tree in a host-free `openapi.json` with every document
@@ -139,18 +140,23 @@ and `getbible.api-base-url`.
 ## Output compatibility and semantic enrichment
 
 The established translation, book, chapter, and verse fields are retained. The
-converter derives complete `tokens` and `spans` from OSIS word markup and
-promotes supported structural markup into compact fields:
+converter maps supported OSIS, ThML, GBF, TEI and plain-text source formats into
+common semantics, retaining lexical `tokens`, nested `spans`, and source structure:
 
 - `editorial` is the ordered chapter-level reading-layout contract. Headings
   identify a verse and the `before` edge; paragraphs use only inclusive integer
-  `start` and `end` verse numbers;
+  `start` and `end` verse numbers. Additive footnote entries retain full bodies
+  and internal headings/paragraphs; structure entries preserve other source markup;
+- optional chapter `reference` holds cross-reference bodies and targets separately
+  from verses and editorial, including references occurring inside footnotes;
+- recursive `content` preserves ordered text, element attributes, and nested
+  structure; explicit links connect chapter-local note and reference entries;
 - `paragraph: true` marks a verse that begins a new paragraph;
 - book-level `titles` retains title metadata belonging to the book itself;
 - module, testament, book, and chapter introduction text remains attached at its
   natural structural level.
 
-`editorial` is emitted identically in the nested chapter objects of translation
+`editorial` and `reference` are emitted identically in the nested chapter objects of translation
 and book documents and in the standalone chapter document. Chapter- and
 verse-level `titles` arrays are deliberately omitted so headings have one
 unambiguous public representation; book-level `titles` and verse-level
@@ -167,8 +173,11 @@ without bloating every generated document.
 Text envelopes are decoded independently from transport validation. Valid UTF-8
 sequences remain unchanged. If a historic module contains isolated single-byte text
 despite declaring UTF-8, undecodable bytes use the SWORD-compatible Windows-1252
-mapping with a total Latin-1 fallback. OSIS tokens and structure remain best-effort
-enrichment and are omitted when their source markup is not safe to parse. Repeated
+mapping with a total Latin-1 fallback. Source-format adapters work from encoding-aware Unicode projections while exact
+raw extraction bytes remain unchanged. Unknown constructs are preserved in source
+content and unsupported interpretation produces diagnostics. Study anchors use
+Unicode code-point offsets and explicitly mark unresolved alignment; existing
+word-based token/span positions and heading anchors retain their meanings. Repeated
 leading `LF`, `CR`, or `CRLF` characters supplied as paragraph formatting are
 removed from every verse `text` value; line endings inside the verse are preserved.
 
@@ -219,6 +228,14 @@ The CI workflow runs both unit tests and real native integration on pull request
 and configured branch pushes. Manual CI runs default to integration enabled;
 an explicit `run_integration: false` opts out for a unit-only investigation.
 Requesting `--run-integration` without an installed executable fails the run.
+
+The `Native Study Conformance` workflow additionally tests the study extraction
+candidate from an immutable `getbible/getbiblesword` commit. It builds the pinned
+SWORD dependency and candidate CLI, then runs the real-module integration suite
+with normalized-source assertions required. This read-only PR/manual job does
+not publish artifacts or change `conf/GetBibleSwordRelease.json`. The ordinary
+integration and smoke workflows continue testing the latest stable release;
+production still uses that central release policy.
 
 The `Native GetBibleSWORD Smoke Test` workflow performs this real binary-backed
 integration on master, on a daily schedule, and by manual dispatch. The schedule

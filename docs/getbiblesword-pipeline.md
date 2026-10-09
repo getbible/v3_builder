@@ -25,7 +25,8 @@ explicit and both projects can release and test independently.
    receives a deterministic extension number derived from its source identity.
    This never uses a testament-local index as an API address. Distinct source
    books cannot silently merge under one number. Text, complete token/span data,
-   paragraph markers, book titles, chapter-level `editorial`, and introductions
+   paragraph markers, book titles, chapter-level `editorial` including full footnotes, separate chapter
+   `reference` objects, retained source content, and introductions
    are preserved. Introduction/title-only books remain present; empty canon
    positions do not manufacture output.
 8. The module ZIPs, SWORD root, and contracts are discarded after the build
@@ -58,11 +59,14 @@ members are convenience projections. The contract is not an archive and is
 never published.
 
 The generated tree keeps its established translation/book/chapter/verse fields
-and complete token/span model. It additionally projects supported OSIS structure:
+and complete token/span model. It projects supported OSIS, ThML, GBF, TEI and plain-text source semantics:
 
 - ordered chapter-level `editorial` entries: headings anchored before a verse
   and complete inclusive paragraph ranges using only `start` and `end` verse
-  numbers;
+  numbers, plus anchored footnotes and preserved source structures;
+- chapter `reference` objects containing cross-reference bodies, original targets,
+  and safely resolved addresses, separate from verse/editorial fields;
+- recursive source `content`, including note-local headings and paragraphs;
 - `paragraph: true` on a verse that begins a paragraph;
 - ordered book-level `titles` for title metadata belonging to the book;
 - normalized `introduction` prose at its natural structural level.
@@ -76,13 +80,19 @@ one explicit paragraph start exists, ranges cover every emitted verse from the
 chapter's first verse through its last; no paragraph ranges are invented for a
 chapter with no source marker. Finalization then removes the transient chapter
 and verse `titles` arrays. Because it happens on the shared chapter object,
-translation, book, and standalone chapter files receive the same ordered array.
+translation, book, and standalone chapter files receive the same ordered array
+and reference object. Legacy heading and paragraph fields retain their meanings;
+new study anchors use Unicode code-point offsets or explicit unresolved alignment.
 
 Display text is content-tolerant. Builder preserves valid UTF-8 sequences and
 maps isolated historic Windows-1252/Latin-1 bytes into Unicode even when a module
-incorrectly declares UTF-8. Optional OSIS token and structural enrichment is used
-only from a valid UTF-8 projection; unusable optional markup does not reject a
-verse whose stripped display text is available. Source paragraph formatting may
+incorrectly declares UTF-8. Encoding-aware source normalization is separate from authoritative raw bytes.
+Supported formats pass through semantic adapters; source attributes and unknown
+constructs are retained with diagnostics for unsupported interpretation. Unusable
+optional markup does not reject a verse whose stripped display text is available.
+Native entry attributes must be populated by rendering the current entry and
+snapshotted before subsequent filters mutate them. They supplement source markup;
+a native `normalized_raw` projection remains transient and never replaces raw bytes. Source paragraph formatting may
 place repeated `LF`, `CR`, or `CRLF` characters before a verse; Builder removes
 those leading line endings from `text` while preserving line endings inside the
 verse.
@@ -155,8 +165,9 @@ paragraph encodings are exercised. It never pushes to public repositories.
 `.github/workflows/inspect-kjv-api.yml` is a manual, KJV-only diagnostic build. It
 starts from a fresh module download and prints size reports, structural summaries,
 and representative full verse records for Psalms, John, and Revelation chapters
-1–5. It validates exact `editorial` entry fields, contiguous order values, heading
-anchors, boolean canonical flags, and complete non-overlapping paragraph coverage.
+1–5. It validates required and supported additive `editorial` fields, contiguous order values, heading
+anchors, boolean canonical flags, complete non-overlapping paragraph coverage,
+recursive study content, unique IDs, resolved links, and Unicode anchor bounds.
 It checks that every JSON document has a matching `.sha` sibling, and that
 `openapi.json` is a host-free description whose paths share one version
 segment, that lists the built translation, embeds every document schema, and
@@ -165,6 +176,25 @@ It also rejects chapter/verse headings duplicated into `titles`, verse text
 beginning with a line ending, missing data, malformed token/span ranges,
 source-envelope leaks, symlinks, and files at or above 95 MiB. It does not cache,
 upload, or publish the result.
+
+## Candidate study extraction validation
+
+`.github/workflows/native-study-conformance.yml` is a read-only PR/manual job
+for the native study extraction changes. It checks out the immutable
+`getbible/getbiblesword` commit
+`30c275cc63b79f2d5416493c10d9b80312cb9e91`, builds its pinned SWORD dependency
+and Release CLI, and runs Builder's real-module integration suite with
+`GETBIBLESWORD_REQUIRE_NORMALIZED=1`. Candidate validation therefore requires the
+new normalized-source projection, alongside the ordinary stream integrity,
+semantic output, and schema checks. The native project's own CI owns its unit
+and driver-conformance suites.
+
+This test source pin is not a production version override. The central
+`conf/GetBibleSwordRelease.json` remains unchanged, and ordinary integration,
+smoke, preview and publication workflows continue resolving the latest stable
+release. The candidate job has no publication permissions, writes no remote
+repositories, uploads no extraction artifacts, and cancels stale runs when a PR
+changes. Promoting the extractor still requires its separately reviewed release.
 
 ## Production gate
 

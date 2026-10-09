@@ -10,13 +10,34 @@
     "properties": {
       "text": {
         "type": "string",
-        "minLength": 1,
-        "description": "The introduction text."
+        "description": "The introduction display text. It can be empty only when non-empty content retains source material such as a note-only introduction."
+      },
+      "content": {
+        "$ref": "content.schema.json"
       }
     },
     "required": [
       "text"
     ],
-    "additionalProperties": false
+    "additionalProperties": false,
+    "anyOf": [
+      {
+        "properties": {
+          "text": {
+            "minLength": 1
+          }
+        }
+      },
+      {
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "minItems": 1
+          }
+        }
+      }
+    ]
   }
 }

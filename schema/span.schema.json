@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "span.schema.json",
   "title": "Span",
-  "description": "An annotation over a range of tokens: the OSIS context element that marks them (divineName, transChange, hi, q, foreign, inscription, name, speaker, number, unit or seg), the exact text it marks, and the range in both addressings. `token_start` and `token_end` index the verse's tokens array (0-based, inclusive); `word_start` and `word_end` count whitespace-separated words of the display text (1-based, inclusive; 0 when the text could not be located).",
+  "description": "An annotation over a range of tokens: the OSIS-equivalent context element that marks them (divineName, transChange, hi, q, foreign, inscription, name, speaker, number, unit or seg), the exact text it marks, and the range in both addressings. `token_start` and `token_end` index the verse's tokens array (0-based, inclusive); `word_start` and `word_end` count whitespace-separated words of the display text (1-based, inclusive; 0 when the text could not be located).",
   "type": "object",
   "properties": {
     "tag": {

@@ -62,6 +62,9 @@
       },
       "description": "The verses of the chapter that have text, in verse order.",
       "minItems": 1
+    },
+    "reference": {
+      "$ref": "reference.schema.json"
     }
   },
   "required": [
@@ -113,6 +116,9 @@
             "$ref": "title.schema.json"
           },
           "description": "Title metadata of a chapter without published verses; a chapter with verses carries its headings in editorial instead."
+        },
+        "reference": {
+          "$ref": "reference.schema.json"
         }
       },
       "required": [
@@ -136,10 +142,19 @@
         }
       },
       "else": {
-        "not": {
-          "required": [
-            "editorial"
-          ]
+        "properties": {
+          "editorial": {
+            "items": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "footnote",
+                    "structure"
+                  ]
+                }
+              }
+            }
+          }
         }
       }
     }

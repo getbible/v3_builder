@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reference.schema.json",
+  "title": "Chapter references",
+  "description": "Cross-reference entries belonging to a chapter. Bodies and destination lists occur here, outside verses and editorial. IDs are deterministic within the chapter; anchors locate source occurrences. Target values remain authoritative; numeric addresses are supplied only when resolved, and follow GetBible book addresses and source versification.",
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "anchor": {
+            "$ref": "anchor.schema.json"
+          },
+          "text": {
+            "type": "string"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/target"
+            }
+          },
+          "content": {
+            "$ref": "content.schema.json"
+          },
+          "attrs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Source attributes retained as strings. Content links use reference_id or footnote_id to identify chapter study entries."
+          }
+        },
+        "required": [
+          "id",
+          "anchor",
+          "text",
+          "targets"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "target": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Original source target. Preserved even when no safe numeric resolution is available."
+        },
+        "scheme": {
+          "enum": [
+            "osis",
+            "uri",
+            "local",
+            "unresolved"
+          ]
+        },
+        "book": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 281474977710655
+        },
+        "chapter": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "verse": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end": {
+          "type": "object",
+          "properties": {
+            "book": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 281474977710655
+            },
+            "chapter": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "verse": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "book"
+          ],
+          "dependentRequired": {
+            "verse": [
+              "chapter"
+            ]
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "value",
+        "scheme"
+      ],
+      "dependentRequired": {
+        "chapter": [
+          "book"
+        ],
+        "verse": [
+          "chapter"
+        ],
+        "end": [
+          "book"
+        ]
+      },
+      "additionalProperties": false
+    }
+  }
+}

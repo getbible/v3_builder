@@ -330,7 +330,10 @@ def _write_rich_contract(path):
         ),
         entry(
             4, 1, 2, "verse",
-            '<w lemma="strong:H0776"><seg type="x-variant" subType="x-1">And the earth</seg></w>',
+            '<w lemma="strong:H0776"><seg type="x-variant" subType="x-1">And the earth</seg></w>'
+            '<note type="study"><title>Note heading</title><p>Note body '
+            '<reference osisRef="Gen.2.1">Gen 2:1</reference>.</p></note>'
+            '<figure src="creation.png"/>',
             "And the earth",
         ),
         entry(5, 2, 1, "verse", "Thus the heavens", "Thus the heavens"),
@@ -370,14 +373,14 @@ def test_generated_documents_validate_against_the_embedded_schemas(described_tre
 
     translation = json.loads((output / "kjv.json").read_text(encoding="utf-8"))
     _validate(document, "translation", translation)
-    assert translation["titles"] == [{"type": "main", "text": "The Holy Bible"}]
-    assert translation["introduction"] == [{"text": "Module preface."}]
+    assert {key: translation["titles"][0][key] for key in ("type", "text")} == {"type": "main", "text": "The Holy Bible"}
+    assert [item["text"] for item in translation["introduction"]] == ["Module preface."]
     assert translation["distribution_history"] == {"history_2.9": "Updated markup"}
 
     book = json.loads((output / "kjv" / "1.json").read_text(encoding="utf-8"))
     _validate(document, "book", book)
-    assert book["titles"] == [{"type": "main", "text": "Genesis"}]
-    assert book["introduction"] == [{"text": "Book preface."}]
+    assert {key: book["titles"][0][key] for key in ("type", "text")} == {"type": "main", "text": "Genesis"}
+    assert [item["text"] for item in book["introduction"]] == ["Book preface."]
     nested = book["chapters"]
     assert [chapter["chapter"] for chapter in nested] == [1, 2, 3]
     assert nested[2]["verses"] == [] and "titles" in nested[2]
@@ -389,6 +392,16 @@ def test_generated_documents_validate_against_the_embedded_schemas(described_tre
         )
         _validate(document, "chapter", chapter)
     first = json.loads((output / "kjv" / "1" / "1.json").read_text(encoding="utf-8"))
+    for field in ("editorial", "reference"):
+        assert first[field] == nested[0][field] == translation["books"][0]["chapters"][0][field]
+        chapter_index = json.loads((output / "kjv" / "1" / "chapters.json").read_text(encoding="utf-8"))
+        assert chapter_index["1"][field] == first[field]
+    footnotes = [item for item in first["editorial"] if item["type"] == "footnote"]
+    assert len(footnotes) == 1 and "Note heading" in footnotes[0]["text"]
+    assert any(item["tag"] == "title" for item in footnotes[0]["content"] if isinstance(item, dict))
+    assert all(item["text"] != "Note heading" for item in first["editorial"] if item["type"] == "heading")
+    assert first["reference"]["items"][0]["targets"][0] == {"value": "Gen.2.1", "scheme": "osis", "book": 1, "chapter": 2, "verse": 1}
+    assert first["reference"]["items"][0]["anchor"]["note"] == footnotes[0]["id"]
     verse = first["verses"][0]
     assert verse["paragraph"] is True
     assert verse["text"] == "In the beginning God created Lord"
@@ -396,7 +409,7 @@ def test_generated_documents_validate_against_the_embedded_schemas(described_tre
     assert verse["tokens"][1]["src"] == [2, 3]
     assert first["verses"][1]["tokens"][0]["variant"] is True
     assert first["editorial"][0]["type"] == "heading"
-    assert first["editorial"][-1]["type"] == "paragraph"
+    assert [(item["start"], item["end"]) for item in first["editorial"] if item["type"] == "paragraph"] == [(1, 2)]
 
     _validate(
         document, "translations-index",
@@ -508,3 +521,83 @@ def test_describe_tree_requires_the_translations_index(tmp_path):
     (tmp_path / "translations.json").write_text("[]", encoding="utf-8")
     with pytest.raises(ValueError, match="translations index"):
         describe_tree(str(tmp_path), mount="/v3", schema_dir=str(SCHEMA_DIR))
+
+
+def test_additive_study_schemas_preserve_old_fields_and_describe_recursive_content(described_tree):
+    output, document = described_tree
+    chapter = json.loads((output / "kjv" / "1" / "1.json").read_text(encoding="utf-8"))
+    legacy_verse = json.loads(json.dumps(chapter["verses"][0]))
+    chapter["editorial"].extend([
+        {
+            "order": len(chapter["editorial"]), "type": "footnote", "id": "fn-1-1",
+            "anchor": {"verse": 1, "offset": 4}, "text": "A titleNote body.",
+            "attrs": {"type": "study"},
+            "content": [
+                {"tag": "title", "children": ["A title"]},
+                {"tag": "p", "children": ["Note body.", {"tag": "reference", "attrs": {"reference_id": "ref-1-1"}, "children": ["Gen 2:1"]}]},
+            ],
+        },
+        {
+            "order": len(chapter["editorial"]) + 1, "type": "structure",
+            "anchor": {"verse": 1, "alignment": "unresolved"},
+            "content": [{"tag": "table", "children": [{"tag": "row", "children": ["retained"]}]}],
+        },
+    ])
+    chapter["reference"] = {"items": [{
+        "id": "ref-1-1", "anchor": {"verse": 1, "offset": 4, "note": "fn-1-1", "note_offset": 17},
+        "text": "Gen 2:1", "targets": [{"value": "Gen.2.1-Gen.2.3", "scheme": "osis", "book": 1, "chapter": 2, "verse": 1, "end": {"book": 1, "chapter": 2, "verse": 3}}],
+        "content": ["Gen 2:1"],
+    }]}
+    _validate(document, "chapter", chapter)
+    assert chapter["verses"][0] == legacy_verse
+    description = document["info"]["description"]
+    for phrase in ("Unicode code-point", "reference_id", "footnote_id", "unresolved", "reference", "ThML", "GBF", "TEI"):
+        assert phrase in description
+
+
+@pytest.mark.parametrize("anchor", [
+    {"verse": 1, "offset": 0},
+    {"verse": 1, "alignment": "unresolved"},
+    {"verse": 1, "offset": 1, "note": "fn-1-1", "note_offset": 2},
+    {"verse": 0, "scope": "introduction", "introduction": 0, "offset": 0},
+    {"verse": 2, "scope": "source", "alignment": "unresolved"},
+])
+def test_study_anchor_schema_explicitly_distinguishes_each_source_location(anchor):
+    document = openapi_document([], mount="/v3", schema_dir=str(SCHEMA_DIR))
+    _validate(document, "anchor", anchor)
+
+
+@pytest.mark.parametrize("anchor", [
+    {"verse": 1},
+    {"verse": 1, "offset": -1},
+    {"verse": 1, "offset": 0, "alignment": "unresolved"},
+    {"verse": 1, "alignment": "approximate"},
+    {"verse": 1, "offset": 0, "note": "fn-1-1"},
+    {"verse": 0, "offset": 0},
+    {"verse": 0, "scope": "introduction", "offset": 0},
+    {"verse": 1, "scope": "introduction", "introduction": 0, "offset": 0},
+    {"verse": 1, "scope": "source", "offset": 0},
+])
+def test_study_anchor_schema_rejects_ambiguous_or_retyped_positions(anchor):
+    document = openapi_document([], mount="/v3", schema_dir=str(SCHEMA_DIR))
+    assert not _validator(document, "anchor").is_valid(anchor)
+
+
+@pytest.mark.parametrize("schema,instance", [
+    ("content", [{"tag": "p", "children": [], "html": "untyped"}]),
+    ("content", [{"tag": "p", "attrs": {"count": 1}, "children": []}]),
+    ("reference", {"items": [{"id": "r1", "anchor": {"verse": 1, "offset": 0}, "text": "ref", "targets": [{"value": "Gen.1.1", "scheme": "osis", "verse": 1}]}]}),
+    ("reference", {"items": []}),
+    ("editorial", [{"order": 0, "type": "reference", "text": "misplaced"}]),
+    ("editorial", [{"order": 0, "type": "paragraph", "start": 1, "end": 2, "content": []}]),
+])
+def test_study_schemas_reject_misplaced_data_and_preserve_paragraph_contract(schema, instance):
+    document = openapi_document([], mount="/v3", schema_dir=str(SCHEMA_DIR))
+    assert not _validator(document, schema).is_valid(instance)
+
+
+def test_introduction_schema_requires_prose_or_retained_source_content():
+    document = openapi_document([], mount="/v3", schema_dir=str(SCHEMA_DIR))
+    _validate(document, "introduction", [{"text": "", "content": [{"tag": "note", "attrs": {"footnote_id": "fn-0-1"}, "children": []}]}])
+    assert not _validator(document, "introduction").is_valid([{"text": ""}])
+    assert not _validator(document, "introduction").is_valid([{"text": "", "content": []}])

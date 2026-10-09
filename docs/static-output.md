@@ -83,8 +83,8 @@ downloaded.
 
 `schema/*.schema.json` is the source of truth for every document type:
 translation, book and chapter documents, the three index documents, the
-checksum index and `.sha` text, and the verse, token, span, editorial, title
-and introduction objects they contain. A change to what the converter or hasher
+checksum index and `.sha` text, and the verse, token, span, editorial, title,
+introduction, reference, anchor, and recursive content objects they contain. A change to what the converter or hasher
 emits is a change to the matching schema. The unit tests validate generated
 documents against the embedded schemas, and the KJV inspection checks that the
 description is a host-free document that lists the built translation, embeds
@@ -133,20 +133,24 @@ chapter:
 - the standalone
   `<abbreviation>/<book-number>/<chapter-number>.json` document.
 
-`order` is a contiguous zero-based integer across every heading and paragraph
+`order` is a contiguous zero-based integer across every editorial
 entry in chapter reading order.
 
-A heading has exactly these fields:
+A heading keeps these required fields:
 
 - `order`;
 - `type: "heading"`;
 - `anchor.verse`, an emitted verse number in the current chapter;
 - `anchor.edge: "before"`;
 - `text`;
-- `heading_type`, copied from the OSIS title type, or `unspecified` when the
+- `heading_type`, copied from the source title type in OSIS-equivalent semantics, or `unspecified` when the
   source supplies no type;
 - `canonical`, which is `true` only when the source OSIS explicitly marks the
   title canonical and is otherwise `false`.
+
+A heading can additionally retain `content`, string-valued source `attrs`,
+`subtype`, and paired `tokens`/`spans`. Their positions address the heading text,
+not the associated verse. Existing heading anchors do not change.
 
 `canonical` records source metadata. Builder does not make a theological
 judgment about whether a heading is inspired.
@@ -171,8 +175,71 @@ milestone and never starts a paragraph:
 
 This makes the compact ranges directly usable for paragraph rendering while
 remaining faithful to the source markers. Headings may be emitted without
-paragraph entries. The entire `editorial` field is omitted when a chapter has
-neither headings nor explicit paragraph markers.
+paragraph entries. The entire `editorial` field is omitted when a chapter has no editorial entries.
+
+## Full study content and references
+
+`editorial` also admits `footnote` and `structure` entries. A footnote contains
+`order`, `type: "footnote"`, a deterministic chapter-local `id`, `anchor`, `text`,
+`content`, and optional string-valued `attrs`. Internal headings and paragraphs
+remain inside the note; they never become main-text headings or paragraph starts.
+A structure contains `order`, `type: "structure"`, `anchor`, and `content`. This
+preserves poetry, tables, figures, and otherwise unrecognized source elements.
+
+`content` is an ordered recursive array of strings or elements with `tag`,
+optional string-valued `attrs`, and `children` (another content array). It retains
+source structure and metadata as data, not executable HTML. Consumers must render
+supported tags deliberately. Unknown constructs are preserved and the build
+reports unsupported interpretation instead of silently dropping them.
+
+Cross-reference bodies and destinations occur only in a chapter's optional
+`reference` object, whose `items` array is in source order. Each item contains:
+
+- `id`, a deterministic identifier local to the chapter;
+- `anchor`, locating the occurrence in the source;
+- `text`, its visible text;
+- `targets`, an array retaining each source `value` and `scheme` (`osis`, `uri`,
+  `local`, or `unresolved`);
+- optional `content` and string-valued source `attrs`.
+
+Safely resolved Scripture targets add `book`, optional `chapter` and `verse`,
+and optional inclusive `end` with its own book/chapter/verse. Book addresses use
+the existing GetBible identity mapping. The original target remains present when
+resolution is incomplete; no destination is guessed. A consumer must account for
+the source translation's versification before navigating another translation.
+
+Content nodes link to cross-reference entries through `attrs.reference_id`.
+Nested-note placeholders link through `attrs.footnote_id` and have empty
+`children`; each full note body has its own editorial entry. IDs are stable for
+repeated builds of identical source, not permanent across upstream source edits.
+
+Study anchors differ deliberately from existing heading and token addresses:
+
+- Normally `{ "verse": 1, "offset": 4 }` locates a zero-based Unicode code-point
+  position in the published verse `text`. The end-of-text position is valid.
+- An unalignable occurrence uses `{ "verse": 1, "alignment": "unresolved" }`
+  and omits `offset`. A consumer must not invent a character position.
+- A reference inside a footnote additionally carries `note` (the footnote ID)
+  and `note_offset`, a zero-based code-point position in that footnote's `text`.
+- A chapter-introduction occurrence uses `scope: "introduction"`, `verse: 0`,
+  and an `introduction` index. Its offset addresses that introduction entry's
+  text. These are study anchors, never new scripture verse addresses.
+- An original verse with no public display text can retain study material through
+  `scope: "source"` and `alignment: "unresolved"`; its source verse number is
+  preserved without manufacturing a public verse or an offset.
+
+Footnote and structure entries sort after headings and paragraph starts at each
+verse, then by offset and source order. Unresolved offsets sort with offset zero without implying a known text position.
+Chapter introductions sort before scripture verses. Existing paragraph coverage
+and heading-before-verse semantics remain unchanged. A chapter with no published
+verses can retain footnote/structure editorial entries and references, alongside
+its introduction/title metadata, without obtaining a standalone chapter file.
+
+The same editorial and reference data appear in the chapter nested in translation
+and book documents and in its standalone chapter document. `chapters.json`
+retains them as chapter metadata. No reference list is added to verse fields or
+mixed into editorial. The schemas and the generated OpenAPI description carry
+this additive contract with every built tree.
 
 ## Verse and book-title semantics
 
@@ -186,7 +253,7 @@ Every emitted verse keeps the established fields:
 removes repeated leading line endings introduced by source paragraph formatting
 but preserves line endings that occur inside the verse.
 
-Supported OSIS structure is projected into compact, optional fields:
+Supported source formats map into OSIS-equivalent semantics and compact, optional fields:
 
 - `paragraph: true` means the verse begins a paragraph;
 - `tokens` retains word-level lexical attributes and visible word positions;
@@ -195,7 +262,8 @@ Supported OSIS structure is projected into compact, optional fields:
 The book object may contain an ordered `titles` list for title metadata belonging
 to that book. A book title contains `text`, its OSIS `type` when supplied,
 optional `canonical` and `subtype` values, and title-local `tokens`/`spans` when
-word markup is available.
+word markup is available. Optional `content` and `attrs` preserve title structure
+and source attributes.
 
 Chapters with verses, and verse objects, do not contain `titles`. Builder
 collects their OSIS
@@ -208,7 +276,10 @@ has to be reconciled with `editorial`.
 Module, testament, book, and chapter introduction prose is normalized into an
 `introduction` list at the appropriate level. Structural title-only entries are
 promoted to book `titles` or chapter `editorial` without duplicating the same
-string as introduction prose.
+string as introduction prose. Each introduction may add `content`, preserving
+source paragraphs, annotations and relationships within the same entry. A
+note-only introduction can have empty `text` only when its `content` is non-empty,
+keeping a source location without inventing prose.
 
 ## Transient extraction boundary
 
@@ -226,7 +297,7 @@ The following extraction-only data is deliberately absent from every generated
 document:
 
 - `source` and `source_contract` envelopes;
-- raw/rendered/stripped byte projections;
+- raw/rendered/stripped byte projections and intermediate `normalized_raw`;
 - base64 payloads and annotation-segment envelopes;
 - module filesystem artifacts and exact configuration-source records.
 
@@ -263,7 +334,7 @@ This prevents silent semantic loss while keeping the generated documents small.
   GitHub `GH001` are not retried.
 
 The manual `Inspect fresh KJV API output` workflow builds KJV from a fresh module
-download, validates the exact `editorial` object shapes and range coverage,
+download, validates the `editorial` object shapes, reference links, anchor bounds, and range coverage,
 checks the generated tree description, prints bounded structural summaries and
 representative records for Psalms, John, and Revelation chapters 1–5, and
 applies the same envelope and size checks without publishing anything.

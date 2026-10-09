@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "anchor.schema.json",
+  "title": "Study anchor",
+  "description": "Source location in one published chapter. offset is a zero-based Unicode code-point position in the published verse text (including its end position). If alignment is unresolved, offset is absent: consumers must not guess. A reference inside a footnote also identifies note and note_offset in that footnote text; the verse location remains its attachment to Scripture. scope introduction requires verse 0 and an introduction index; offset then addresses that introduction text. scope source retains an original verse not emitted as display text and always uses unresolved alignment.",
+  "type": "object",
+  "properties": {
+    "verse": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "alignment": {
+      "const": "unresolved"
+    },
+    "note": {
+      "type": "string",
+      "minLength": 1
+    },
+    "note_offset": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "scope": {
+      "enum": [
+        "introduction",
+        "source"
+      ],
+      "description": "introduction locates chapter introduction text; source retains a verse with no published display text and unresolved alignment. Absent for an emitted verse."
+    },
+    "introduction": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based entry index in the chapter introduction array."
+    }
+  },
+  "required": [
+    "verse"
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "offset"
+      ],
+      "not": {
+        "required": [
+          "alignment"
+        ]
+      }
+    },
+    {
+      "required": [
+        "alignment"
+      ],
+      "not": {
+        "required": [
+          "offset"
+        ]
+      }
+    }
+  ],
+  "dependentRequired": {
+    "note": [
+      "note_offset"
+    ],
+    "note_offset": [
+      "note"
+    ]
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "const": "introduction"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "introduction"
+        ],
+        "properties": {
+          "verse": {
+            "const": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "verse": {
+            "minimum": 1
+          }
+        },
+        "not": {
+          "required": [
+            "introduction"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "const": "source"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "alignment"
+        ],
+        "not": {
+          "required": [
+            "offset"
+          ]
+        }
+      }
+    }
+  ]
+}

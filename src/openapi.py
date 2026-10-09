@@ -42,6 +42,9 @@ SCHEMA_NAMES = (
     "token",
     "span",
     "editorial",
+    "reference",
+    "anchor",
+    "content",
     "title",
     "introduction",
 )
@@ -102,7 +105,7 @@ are not described here.
 **Reading a verse.** `text` is the display text; it never begins with a line
 ending, while line endings inside the verse are preserved. `paragraph: true`
 marks a verse that begins a paragraph. `tokens` and `spans` are present
-together when the source carries OSIS word markup: tokens are the words in
+together when the source carries supported word or annotation markup: tokens are the words in
 reading order with their lexical attributes (`lemma`, `morph` and `xlit`
 grouped by scheme, `src` as positions), spans are annotations such as
 `divineName`, `transChange` and `q` over a token range (`token_start` and
@@ -113,16 +116,52 @@ range; a reader that needs the original-language data uses the token range.
 
 **Editorial.** A chapter's optional `editorial` array is its reading layout in
 order: headings anchored before a verse, with the source's title type and
-canonical flag, and paragraphs as inclusive verse ranges. When paragraph
+canonical flag, paragraphs as inclusive verse ranges, footnotes with their full
+text and nested source content, and structures such as poetry, tables and figures.
+Footnote headings and paragraphs stay inside their note. Heading content and
+optional tokens/spans use heading-local text positions. When paragraph
 entries are present they cover every verse of the chapter contiguously. The
 same array appears in the standalone chapter document and in the chapter
 nested in the book and translation documents. A chapter with verses carries no
 `titles`, and verses never do; headings have that one representation.
 
+**Study locations and content.** Footnotes and structures use an anchor with
+`verse` and `offset`: a zero-based Unicode code-point position in that published
+verse's text, including the position immediately after its last character. An
+unresolved alignment has `alignment: "unresolved"` and omits `offset`; readers
+must not invent a location. An introduction anchor has `scope: "introduction"`,
+`verse: 0`, and a zero-based `introduction` index; its offset addresses that
+entry's text. A `scope: "source"` anchor preserves an original verse without
+published display text and always uses unresolved alignment. These offsets differ from the existing 1-based word
+positions of tokens/spans and do not change heading anchors. Recursive `content`
+arrays preserve ordered text and elements (`tag`, optional string-valued `attrs`,
+and `children`). Retained tags are data, not executable HTML. Unrecognized source
+constructs remain inspectable; the build reports unsupported interpretation.
+
+**Cross-references.** Optional chapter `reference` is an object containing an
+ordered `items` array, separate from verses and editorial. Each item has an `id`,
+`anchor`, visible `text`, and `targets`, with source `content` and `attrs` when
+supplied. Each target retains its original `value` and `scheme` (osis, uri, local
+or unresolved); safely resolved Scripture destinations additionally supply
+GetBible `book`, optional `chapter` and `verse`, and optional inclusive `end`.
+Do not guess addresses for unresolved values or assume another translation has
+the same versification. A reference inside a footnote additionally identifies
+`anchor.note` and `anchor.note_offset`, a zero-based code-point position in that
+footnote's text. Content elements link to chapter entries through `reference_id`
+or `footnote_id` in `attrs`; footnote placeholders have empty children. IDs are
+deterministic within the chapter, not permanent identifiers across source edits.
+The same reference object occurs in all three chapter representations and in the
+chapter index metadata.
+
 **Titles and introductions.** A translation or a book may carry `titles`, the
 title metadata belonging to it, and `introduction`, prose attached at that
 level; a chapter may carry `introduction`. Both are absent when the source
-supplies nothing.
+supplies nothing. Their optional `content` retains source structure. An
+introduction with only study material can have empty `text` and non-empty
+`content`, so its attached notes still have an explicit source location. Supported
+OSIS, ThML, GBF, TEI and plain-text sources map to common semantics. Published
+text is UTF-8; source byte envelopes and intermediate encoding projections never
+appear in the generated tree.
 """
 
 _TAGS = [
@@ -421,7 +460,7 @@ def _chapter_paths(mount: str) -> dict[str, Any]:
             "chapter",
             "One chapter",
             "Every verse of one chapter with the translation's metadata, the "
-            "book it belongs to, and its reading layout and introduction when "
+            "book it belongs to, and its reading layout, references and introduction when "
             "the source supplies them.",
             _ref("chapter"),
             ("translation", "book", "chapter"),

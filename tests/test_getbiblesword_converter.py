@@ -157,7 +157,7 @@ def test_native_converter_emits_lean_semantic_api_shape(tmp_path):
     assert verse["tokens"][0]["lemma"] == {"strong": ["H07225"]}
     assert verse["paragraph"] is True
     assert document["books"][0]["titles"] == [
-        {"type": "main", "text": "Genesis"}
+        {"type": "main", "text": "Genesis", "attrs": {"type": "main"}}
     ]
     assert "titles" not in document["books"][0]["chapters"][0]
     assert "titles" not in verse
@@ -167,6 +167,7 @@ def test_native_converter_emits_lean_semantic_api_shape(tmp_path):
             "type": "heading",
             "anchor": {"verse": 1, "edge": "before"},
             "text": "Creation",
+            "attrs": {"type": "chapter"},
             "heading_type": "chapter",
             "canonical": False,
         },
@@ -175,6 +176,7 @@ def test_native_converter_emits_lean_semantic_api_shape(tmp_path):
             "type": "heading",
             "anchor": {"verse": 1, "edge": "before"},
             "text": "The Creation",
+            "attrs": {"canonical": "true", "type": "section"},
             "heading_type": "section",
             "canonical": True,
         },
@@ -183,6 +185,16 @@ def test_native_converter_emits_lean_semantic_api_shape(tmp_path):
             "type": "paragraph",
             "start": 1,
             "end": 1,
+        },
+        {
+            "order": 3,
+            "type": "structure",
+            "anchor": {"verse": 1, "offset": 0},
+            "content": [
+                {"tag": "title", "attrs": {"canonical": "true", "type": "section"}, "children": ["The Creation"]},
+                {"tag": "milestone", "attrs": {"marker": "¶", "type": "x-p"}, "children": []},
+                {"tag": "w", "attrs": {"lemma": "strong:H07225"}, "children": ["In the beginning"]},
+            ],
         },
     ]
     assert document["distribution_license"] == "Public Domain"
@@ -272,6 +284,7 @@ def test_editorial_orders_headings_and_closes_complete_paragraph_ranges(tmp_path
             "type": "heading",
             "anchor": {"verse": 1, "edge": "before"},
             "text": "CHAPTER 1.",
+            "attrs": {"type": "chapter"},
             "heading_type": "chapter",
             "canonical": False,
         },
@@ -286,6 +299,7 @@ def test_editorial_orders_headings_and_closes_complete_paragraph_ranges(tmp_path
             "type": "heading",
             "anchor": {"verse": 2, "edge": "before"},
             "text": "A new section",
+            "attrs": {"type": "section"},
             "heading_type": "section",
             "canonical": False,
         },
@@ -297,9 +311,28 @@ def test_editorial_orders_headings_and_closes_complete_paragraph_ranges(tmp_path
         },
         {
             "order": 4,
+            "type": "structure",
+            "anchor": {"verse": 2, "offset": 0},
+            "content": [
+                {"tag": "title", "attrs": {"type": "section"}, "children": ["A new section"]},
+                {"tag": "milestone", "attrs": {"marker": "¶", "type": "x-p"}, "children": []},
+                {"tag": "w", "attrs": {"lemma": "strong:H2"}, "children": ["Two"]},
+            ],
+        },
+        {
+            "order": 5,
             "type": "paragraph",
             "start": 4,
             "end": 4,
+        },
+        {
+            "order": 6,
+            "type": "structure",
+            "anchor": {"verse": 4, "offset": 0},
+            "content": [
+                {"tag": "milestone", "attrs": {"marker": "¶", "type": "x-p"}, "children": []},
+                {"tag": "w", "attrs": {"lemma": "strong:H4"}, "children": ["Four"]},
+            ],
         },
     ]
     assert "titles" not in document["books"][0]["chapters"][0]
@@ -442,7 +475,7 @@ def test_crosswire_revelation_div_milestones_build_complete_editorial_ranges(
     ]
     assert paragraphs == [(1, 3), (4, 6), (7, 8), (9, 11), (12, 20)]
     assert document["books"][0]["titles"] == [
-        {"type": "main", "text": "Revelation"}
+        {"type": "main", "text": "Revelation", "attrs": {"type": "main"}}
     ]
     assert "titles" not in chapter
     assert all("titles" not in verse for verse in chapter["verses"])
@@ -852,5 +885,5 @@ def test_empty_verse_heading_is_not_relocated_before_earlier_text(tmp_path):
     ])
     chapter = document["books"][0]["chapters"][0]
     assert [verse["verse"] for verse in chapter["verses"]] == [1, 3]
-    assert [item["text"] for item in chapter["editorial"]] == ["Current section"]
+    assert [item["text"] for item in chapter["editorial"]] == ["Later section", "Current section"]
     assert chapter["editorial"][0]["anchor"] == {"verse": 3, "edge": "before"}
