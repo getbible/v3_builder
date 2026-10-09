@@ -1068,7 +1068,11 @@ class GetBibleSwordConverter:
                 verse["tokens"] = word_data["tokens"]
                 verse["spans"] = word_data["spans"]
             preserve_unparsed = any(item["code"] in {"unsupported_source_format", "unparsed_source_fragment"} for item in warnings)
-            study = extract_study(osis, text, verse_number, context={"retain_content": preserve_unparsed, "book_resolver": book_resolver})
+            study = extract_study(osis, text, verse_number, context={
+                "retain_content": preserve_unparsed, "book_resolver": book_resolver,
+                "spans": word_data["spans"] if word_data else [],
+                "tokens": word_data["tokens"] if word_data else [],
+            })
             _supplement_study(study, record, markup, verse_number, text, book_resolver=book_resolver)
             _reconcile_title_content(semantics, study)
             study["verse"] = verse_number

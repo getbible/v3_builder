@@ -430,6 +430,35 @@ def _span_from_range(info, start, end, source, tokens):
     return span
 
 
+def _ordinary_lexical_word(element):
+    return (
+        element.tag == 'w' and not len(element)
+        and bool((element.text or '').strip())
+        and element.text == element.text.strip()
+        and all(value and '}' not in name and name not in {
+            'token', 'word_start', 'word_end', 'morphSegmented',
+            'variant', 'variantType', '_source_start', '_source_end',
+        } for name, value in element.attrib.items())
+    )
+
+
+def _flat_lexical_segment(element):
+    """Whether a segment can be reconstructed from one span and its words.
+
+    Bare prose, nested markup, and empty words need the retained source tree.
+    Whitespace between complete lexical words remains in the span's text.
+    """
+    return (
+        element.tag == 'seg'
+        and element.get('{http://www.w3.org/XML/1998/namespace}space') != 'preserve'
+        and bool(len(element))
+        and not (element.text or '').strip()
+        and all(_ordinary_lexical_word(child)
+                and not (child.tail or '').strip()
+                for child in element)
+    )
+
+
 def _walk(element, tokens, spans, source, ranges):
     """Collect lexical tokens and every independently nested annotation."""
     tag = _strip_ns(element.tag)
@@ -446,8 +475,9 @@ def _walk(element, tokens, spans, source, ranges):
         return
     for child in element:
         _walk(child, tokens, spans, source, ranges)
-    if maker is not None:
-        span = _span_from_range({'tag': tag, 'attrs': _span_attributes(element)},
+    if maker is not None or _flat_lexical_segment(element):
+        attrs = dict(element.attrib) if tag == 'seg' else _span_attributes(element)
+        span = _span_from_range({'tag': tag, 'attrs': attrs},
                                 *ranges[element], source, tokens)
         if span:
             spans.append(span)
