@@ -577,7 +577,7 @@ class TestStructuralSemantics:
             '<title type="chapter">CHAPTER 1.</title>'
         )
         assert parse_osis_semantics(raw)['titles'] == [
-            {'type': 'chapter', 'text': 'CHAPTER 1.'}
+            {'type': 'chapter', 'text': 'CHAPTER 1.', 'attrs': {'type': 'chapter'}}
         ]
 
     def test_chapter_title_attribute_is_a_fallback(self):
@@ -624,9 +624,12 @@ class TestStructuralSemantics:
             '<foreign xml:lang="hbo">א ALEPH.</foreign>'
             '</title><w lemma="strong:H0835">Blessed</w>'
         )
-        assert parse_osis_semantics(raw)['titles'] == [
-            {'type': 'acrostic', 'text': 'א ALEPH.', 'canonical': True}
-        ]
+        title = parse_osis_semantics(raw)['titles'][0]
+        assert title['type'] == 'acrostic'
+        assert title['text'] == 'א ALEPH.'
+        assert title['canonical'] is True
+        assert title['tokens'][0]['token'] == 'א ALEPH.'
+        assert title['spans'][0]['tag'] == 'foreign'
 
     def test_book_title_keeps_inline_abbreviation(self):
         raw = (
@@ -1341,3 +1344,209 @@ class TestRealWorldWordPositions:
         assert [(t['word_start'], t['word_end']) for t in result['tokens']] == [
             (1, 1), (2, 2), (3, 3),
         ]
+
+
+class TestSourcePositionAccuracy:
+    def test_token_does_not_match_substring_in_unmarked_prefix(self):
+        result = parse_osis_verse('the <w>he</w>', 'the he')
+        assert result['tokens'][0]['word_start'] == 2
+
+    def test_unmarked_repetition_does_not_shift_token_positions(self):
+        result = parse_osis_verse('word word <w>word</w> word <w>word</w>',
+                                 'word word word word word')
+        assert [t['word_start'] for t in result['tokens']] == [3, 5]
+
+    def test_whitespace_normalization_keeps_multiword_token(self):
+        result = parse_osis_verse('one\n<w>two\t  three</w> four',
+                                 'one two three four')
+        assert result['tokens'][0]['word_start'] == 2
+        assert result['tokens'][0]['word_end'] == 3
+
+    def test_whole_source_alignment_accepts_rendered_quote_markers(self):
+        raw = 'He said <q who="Jesus"><w>come</w> to me</q>.'
+        result = parse_osis_verse(raw, 'He said “come to me”.')
+        assert result['tokens'][0]['word_start'] == 3
+        assert find_span(result['spans'], 'q')['word_end'] == 5
+
+    @pytest.mark.parametrize('raw,clean,positions', [
+        ('<w>un</w><w>broken</w> <w>word</w>', 'unbroken word', [1, 1, 2]),
+        ('這<w>是</w><w>神</w>的話', '這是神的話', [1, 1]),
+        ('the <w>he</w>', 'the he', [2]),
+    ])
+    def test_partial_word_and_cjk_tokens_keep_source_boundaries(self, raw, clean, positions):
+        assert [t['word_start'] for t in parse_osis_verse(raw, clean)['tokens']] == positions
+
+    def test_no_clean_text_uses_unmarked_source_text_too(self):
+        result = parse_osis_verse('the <w>he</w>')
+        assert result['tokens'][0]['word_start'] == 2
+
+    def test_unmatched_token_has_zero_position_and_diagnostic(self):
+        diagnostics = []
+        result = parse_osis_verse('<w>abc</w>', 'xyz', diagnostics=diagnostics)
+        assert result['tokens'][0]['word_start'] == 0
+        assert diagnostics[0]['code'] == 'unaligned_annotation'
+        assert all(not key.startswith('_') for item in result.values()
+                   for record in item for key in record)
+
+
+class TestNestedAnnotationCompleteness:
+    def test_inner_divine_name_retains_outer_italics(self):
+        raw = '<w lemma="strong:H3068"><hi type="italic">the <divineName>LORD</divineName> alone</hi></w>'
+        result = parse_osis_verse(raw, 'the LORD alone')
+        assert [t['token'] for t in result['tokens']] == ['the', 'LORD', 'alone']
+        hi = find_span(result['spans'], 'hi')
+        divine = find_span(result['spans'], 'divineName')
+        assert (hi['token_start'], hi['token_end']) == (0, 2)
+        assert (hi['word_start'], hi['word_end']) == (1, 3)
+        assert (divine['token_start'], divine['token_end']) == (1, 1)
+
+    def test_annotation_without_lexical_words_is_preserved(self):
+        result = parse_osis_verse('The <hi type="italic">added</hi> word',
+                                 'The added word')
+        assert result['tokens'][0]['token'] == 'added'
+        assert find_span(result['spans'], 'hi')['word_start'] == 2
+
+    def test_equal_nested_annotations_are_independent(self):
+        result = parse_osis_verse('<w><hi type="italic">a <hi type="italic">b</hi> c</hi></w>')
+        assert [s['span'] for s in find_spans(result['spans'], 'hi')] == ['a b c', 'b']
+
+    def test_note_structure_does_not_escape_into_main_semantics(self):
+        raw = '<w>word</w><note><title>Footnote heading</title><p>body</p><chapter chapterTitle="Note title"/></note>'
+        assert parse_osis_semantics(raw) == {}
+
+    def test_reading_variant_structure_does_not_escape_into_main_semantics(self):
+        raw = '<w>word</w><rdg><title>Alternate</title><p>body</p></rdg>'
+        assert parse_osis_semantics(raw) == {}
+
+    def test_title_lexical_positions_account_for_unmarked_prefix(self):
+        title = parse_osis_semantics('<title>the <w>he</w></title>')['titles'][0]
+        assert title['tokens'][0]['word_start'] == 2
+
+
+class TestQuotationMilestones:
+    def test_milestone_pair_emits_existing_quote_span(self):
+        raw = 'Then <q sID="q1" who="Jesus" level="1"/><w>Come</w> to me<q eID="q1"/> today.'
+        result = parse_osis_verse(raw, 'Then Come to me today.')
+        span = find_span(result['spans'], 'q')
+        assert span == {'tag': 'q', 'span': 'Come to me', 'attrs': {'who': 'Jesus', 'level': '1', 'sID': 'q1'},
+                        'token_start': 0, 'token_end': 0, 'word_start': 2, 'word_end': 4}
+
+    def test_quotation_continues_across_entries(self):
+        state = {}
+        first = parse_osis_verse('<q sID="q1" who="Jesus"/><w>Come</w>', 'Come', state)
+        second = parse_osis_verse('<w>to me</w><q eID="q1"/>', 'to me', state)
+        assert find_span(first['spans'], 'q')['span'] == 'Come'
+        assert find_span(second['spans'], 'q')['span'] == 'to me'
+        assert find_span(second['spans'], 'q')['attrs'] == {'who': 'Jesus', 'sID': 'q1'}
+        assert state['quotes'] == []
+
+    def test_closing_entry_without_words_updates_state(self):
+        state = {}
+        parse_osis_verse('<q sID="q1"/><w>Come</w>', state=state)
+        assert parse_osis_verse('<q eID="q1"/>', state=state) is None
+        assert state['quotes'] == []
+
+    def test_unmarked_quotation_can_continue_across_entries(self):
+        state = {}
+        first = parse_osis_verse('<q sID="q1" who="Jesus"/>Come', state=state)
+        second = parse_osis_verse('to me<q eID="q1"/>', state=state)
+        assert first['tokens'][0]['token'] == 'Come'
+        assert second['spans'][0]['span'] == 'to me'
+        assert state['quotes'] == []
+
+    def test_nested_and_overlapping_milestones_keep_independent_ranges(self):
+        raw = '<q sID="a" who="A"/><w>one</w> <q sID="b" who="B"/><w>two</w><q eID="a"/> <w>three</w><q eID="b"/>'
+        result = parse_osis_verse(raw)
+        spans = {s['attrs']['who']: s for s in result['spans']}
+        assert (spans['A']['word_start'], spans['A']['word_end']) == (1, 2)
+        assert (spans['B']['word_start'], spans['B']['word_end']) == (2, 3)
+
+    def test_quote_milestones_within_word_split_precisely(self):
+        raw = '<w lemma="strong:G1">before <q sID="a" who="Jesus"/>inside<q eID="a"/> after</w>'
+        result = parse_osis_verse(raw)
+        assert [t['token'] for t in result['tokens']] == ['before', 'inside', 'after']
+        assert find_span(result['spans'], 'q')['token_start'] == 1
+        assert find_span(result['spans'], 'q')['token_end'] == 1
+
+    def test_note_quote_milestones_do_not_change_main_quote_state(self):
+        state = {}
+        raw = '<note><q sID="n" who="Other"/>note</note><w>Main</w>'
+        result = parse_osis_verse(raw, state=state)
+        assert result['spans'] == []
+        assert state['quotes'] == []
+
+    def test_unmatched_close_is_diagnosed(self):
+        diagnostics = []
+        parse_osis_verse('<w>word</w><q eID="missing"/>', diagnostics=diagnostics)
+        assert diagnostics[0]['code'] == 'unmatched_quote_end'
+
+
+class TestLegacyLexicalSeparators:
+    def test_pipe_lemma_and_morph_values_are_independent_identifiers(self):
+        raw = '<w lemma="strong:G0001|strong:G0002" morph="robinson:N-NSF|robinson:N-NSM">word</w>'
+        token = parse_osis_verse(raw)['tokens'][0]
+        assert token['lemma'] == {'strong': ['G0001', 'G0002']}
+        assert token['morph'] == {'robinson': ['N-NSF', 'N-NSM']}
+
+
+class TestStudySourceAlignment:
+    def test_boundary_after_repeated_unmarked_text_is_exact(self):
+        from osis_parser import _parse_osis_fragment, build_source_alignment
+        root = _parse_osis_fragment('the <w>he</w><note>body</note> said')
+        source, ranges, boundary = build_source_alignment(root, 'the he said')
+        note = root.find('note')
+        assert source == 'the he said'
+        assert boundary(ranges[note][0]) == 6
+
+    def test_boundary_preserves_unicode_character_offsets(self):
+        from osis_parser import _parse_osis_fragment, build_source_alignment
+        root = _parse_osis_fragment('神說<note>body</note>')
+        _, ranges, boundary = build_source_alignment(root, '神說')
+        assert boundary(ranges[root.find('note')][0]) == 2
+
+    def test_unresolvable_boundary_is_not_guessed(self):
+        from osis_parser import _parse_osis_fragment, build_source_alignment
+        root = _parse_osis_fragment('abc<note>body</note>')
+        _, ranges, boundary = build_source_alignment(root, 'xyz')
+        assert boundary(ranges[root.find('note')][0]) is None
+
+    def test_invalid_fragment_reports_problem(self):
+        diagnostics = []
+        assert parse_osis_verse('<w>broken', diagnostics=diagnostics) is None
+        assert diagnostics[0]['code'] == 'invalid_osis'
+
+
+    def test_boundary_inside_collapsed_whitespace_uses_display_whitespace(self):
+        from osis_parser import _parse_osis_fragment, build_source_alignment
+        root = _parse_osis_fragment('word <note>body</note> word')
+        _, ranges, boundary = build_source_alignment(root, 'word word')
+        assert boundary(ranges[root.find('note')][0]) == 5
+
+
+class TestSourceMetadataCompleteness:
+    def test_extra_context_attributes_keep_old_testament_quote_type(self):
+        result = parse_osis_verse('<q type="x-OldTestament" n="q1">Quoted text</q>')
+        assert result['spans'][0]['attrs'] == {'type': 'x-OldTestament', 'n': 'q1'}
+
+    def test_namespaced_context_attributes_remain_distinct(self):
+        result = parse_osis_verse('<foreign lang="one" xml:lang="two">word</foreign>')
+        assert result['spans'][0]['attrs'] == {
+            'lang': 'one', '{http://www.w3.org/XML/1998/namespace}lang': 'two',
+        }
+
+    def test_nested_context_attributes_are_retained(self):
+        raw = '<w><hi type="italic" n="color-red">word</hi></w>'
+        assert parse_osis_verse(raw)['spans'][0]['attrs'] == {'type': 'italic', 'n': 'color-red'}
+
+    def test_title_retains_level_short_name_and_nested_content(self):
+        raw = '<title type="section" level="2" short="Abbr">The <hi type="italic">Heading</hi>.</title>'
+        title = parse_osis_semantics(raw)['titles'][0]
+        assert title['text'] == 'The Heading.'
+        assert title['attrs'] == {'type': 'section', 'level': '2', 'short': 'Abbr'}
+        assert title['content'] == ['The ', {'tag': 'hi', 'attrs': {'type': 'italic'}, 'children': ['Heading']}, '.']
+        assert title['spans'][0]['word_start'] == 2
+
+    def test_same_text_titles_with_distinct_source_metadata_are_retained(self):
+        raw = '<title type="section" level="1">Heading</title><title type="section" level="2">Heading</title>'
+        titles = parse_osis_semantics(raw)['titles']
+        assert [title['attrs']['level'] for title in titles] == ['1', '2']

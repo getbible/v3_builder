@@ -15,11 +15,11 @@ Schema
 Tokens (ordered by position in the verse):
     {
       "token":        "Lord",                   # word text as it appears
-      "lemma":        "strong:H03068",          # intrinsic <w> attributes
-      "morph":        "strongMorph:TH8799",     # (preserved as-is)
-      "src":          "7 8",                    # optional
+      "lemma":        {"strong": ["H03068"]},   # intrinsic <w> attributes
+      "morph":        {"strongMorph": ["TH8799"]},
+      "src":          [7, 8],                    # optional
       "gloss":        "Lord",                   # optional
-      "xlit":         "Latn:Elohim",            # optional
+      "xlit":         {"Latn": ["Elohim"]},      # optional
       "type":         "x-split-1227",           # optional
       "subType":      "x-1",                    # optional
       "morphSegmented": true,                   # flag from <seg type=x-morph>
@@ -93,6 +93,8 @@ Semantic elements:
     <title type="chapter"> element is present.
 """
 
+from difflib import SequenceMatcher
+import json
 import re
 import xml.etree.ElementTree as ET
 
@@ -130,45 +132,39 @@ _SPAN_TAGS = {
 _DIV_PARAGRAPH_TYPES = frozenset({'x-p', 'paragraph'})
 
 
-def parse_osis_verse(raw_text, clean_text=None):
+def parse_osis_verse(raw_text, clean_text=None, state=None, diagnostics=None):
+    """Parse OSIS using source positions, retaining the existing token/span shape.
+
+    ``clean_text`` is the display projection to which whitespace-word positions
+    refer. Without it the complete visible source text, including unmarked text,
+    supplies those positions. ``state`` may be a dictionary retained between
+    consecutive entries of one book; its ``quotes`` list preserves open OSIS
+    quotation milestones. Callers must reset it when changing books/modules.
+    Optional ``diagnostics`` receives structured parsing/alignment problems;
+    diagnostics and private source coordinates never enter public annotations.
     """
-    Parse raw OSIS markup and return token+span structured data.
-
-    Args:
-        raw_text: Raw OSIS XML string from pysword get(clean=False).
-        clean_text: Optional clean verse text from pysword get(clean=True).
-            When provided, token and span word positions are anchored to
-            this text (so consumers can verify them by whitespace-splitting
-            the verse's `text` field). When omitted, word positions are
-            derived from joining tokens with single spaces.
-
-    Returns:
-        Dict with 'tokens' and 'spans' lists, or None if no word-level
-        markup is found or parsing fails.
-
-        Every token carries word_start/word_end (1-based, inclusive).
-        Every span carries word_start/word_end (1-based, inclusive) AND
-        token_start/token_end (0-based index range into tokens[]).
-    """
-    if not raw_text or not _contains_word_markup(raw_text):
+    if not raw_text:
         return None
-
     root = _parse_osis_fragment(raw_text)
     if root is None:
+        _diagnose(diagnostics, 'invalid_osis', 'OSIS fragment could not be parsed')
         return None
 
-    tokens = []
-    spans = []
-    _walk(root, tokens, spans)
-
+    source, ranges = _source_layout(root)
+    tokens, spans = [], []
+    _walk(root, tokens, spans, source, ranges)
+    _quotation_milestones(root, source, ranges, tokens, spans, state, diagnostics)
     if not tokens:
         return None
-
     if clean_text is None:
-        clean_text = ' '.join(t['token'] for t in tokens)
-    _assign_word_positions(clean_text, tokens, spans)
-
+        clean_text = source
+    _assign_word_positions(clean_text, tokens, spans, source, diagnostics)
     return {'tokens': tokens, 'spans': spans}
+
+
+def _diagnose(diagnostics, code, message, **details):
+    if diagnostics is not None:
+        diagnostics.append({'code': code, 'message': message, **details})
 
 
 def parse_osis_semantics(raw_text):
@@ -202,7 +198,7 @@ def parse_osis_semantics(raw_text):
     seen_titles = set()
     chapter_titles = []
 
-    for element in root.iter():
+    for element in _main_text_elements(root):
         tag = _strip_ns(element.tag)
         if _is_paragraph_start(element, tag):
             semantic['paragraph'] = True
@@ -222,9 +218,9 @@ def parse_osis_semantics(raw_text):
 
     for text in chapter_titles:
         fallback = {'type': 'chapter', 'text': text}
-        identity = _title_identity(fallback)
-        if identity not in seen_titles:
-            seen_titles.add(identity)
+        if not any(title.get('type') == 'chapter' and title['text'] == text
+                   for title in titles):
+            seen_titles.add(_title_identity(fallback))
             titles.append(fallback)
 
     if titles:
@@ -261,6 +257,10 @@ def _semantic_title(element):
     if title_type:
         title['type'] = title_type
     title['text'] = text
+    if element.attrib:
+        title['attrs'] = dict(element.attrib)
+    if list(element):
+        title['content'] = _semantic_content(element)
 
     canonical = _xml_boolean(element.get('canonical'))
     if canonical is not None:
@@ -269,15 +269,45 @@ def _semantic_title(element):
     if subtype:
         title['subtype'] = subtype
 
-    tokens = []
-    spans = []
-    for child in element:
-        _walk(child, tokens, spans)
+    # A title has its own coordinate space. Its containing title tag must not
+    # trigger the ordinary verse policy that excludes title contents.
+    wrapper = ET.Element('r')
+    wrapper.text = element.text
+    wrapper.extend(list(element))
+    source, ranges = _source_layout(wrapper, _SEMANTIC_TEXT_SKIP_TAGS)
+    tokens, spans = [], []
+    for child in wrapper:
+        _walk(child, tokens, spans, source, ranges)
     if tokens:
-        _assign_word_positions(text, tokens, spans)
+        _assign_word_positions(text, tokens, spans, source)
         title['tokens'] = tokens
         title['spans'] = spans
     return title
+
+
+def _semantic_content(element):
+    """Preserve nested title text and metadata as semantic JSON nodes."""
+    output = [element.text] if element.text else []
+    for child in element:
+        node = {'tag': child.tag, 'children': _semantic_content(child)}
+        if child.attrib:
+            node['attrs'] = dict(child.attrib)
+        output.append(node)
+        if child.tail:
+            output.append(child.tail)
+    return output
+
+
+def _span_attributes(element):
+    """Keep source attributes alongside existing interpreted/default values.
+
+    Namespace-qualified names remain distinct, so xml:lang or extension attrs
+    cannot overwrite an unrelated unqualified source attribute.
+    """
+    attrs = _SPAN_TAGS[_strip_ns(element.tag)](element)
+    for name, value in element.attrib.items():
+        attrs.setdefault(name, value)
+    return attrs
 
 
 def _title_identity(title):
@@ -288,6 +318,8 @@ def _title_identity(title):
         title.get('text'),
         title.get('canonical'),
         title.get('subtype'),
+        json.dumps(title.get('attrs', {}), sort_keys=True, ensure_ascii=False),
+        json.dumps(title.get('content', []), sort_keys=True, ensure_ascii=False),
     )
 
 
@@ -302,14 +334,6 @@ def _xml_boolean(value):
     if normalized in {'false', '0', 'no'}:
         return False
     return None
-
-
-def _contains_word_markup(raw_text):
-    """Recognize attributed, bare, self-closing, and namespaced OSIS words."""
-
-    return re.search(
-        r'<(?:[A-Za-z_][\w.-]*:)?w(?:\s|/?>)', raw_text
-    ) is not None
 
 
 def osis_plain_text(raw_text):
@@ -343,245 +367,207 @@ def _parse_osis_fragment(raw_text):
             return None
 
 
-def _walk(element, tokens, spans):
-    """
-    Recursively walk the XML tree building tokens and spans.
-
-    For span-producing elements, records the token count before and after
-    recursing into children, then emits a span covering that range.
-    """
-    tag = _strip_ns(element.tag)
-
-    if tag in SKIP_TAGS:
+def _main_text_elements(element):
+    """Visit structure without promoting structure inside notes or variants."""
+    if _strip_ns(element.tag) in {'note', 'figure', 'index', 'rdg', 'rdgGroup'}:
         return
-
-    # Check if this element opens a span
-    span_maker = _SPAN_TAGS.get(tag)
-
-    if tag == 'w':
-        _emit_token(element, tokens, spans)
+    yield element
+    if _strip_ns(element.tag) == 'title':
         return
-
-    # <transChange> without <w> descendants → standalone token + span
-    if tag == 'transChange' and not _has_descendant(element, 'w'):
-        text = _full_text(element).strip()
-        if text:
-            idx = len(tokens)
-            tokens.append({'token': text})
-            span = {
-                'tag': 'transChange',
-                'span': text,
-                'token_start': idx,
-                'token_end': idx,
-            }
-            attrs = {'type': element.get('type', 'added')}
-            if attrs:
-                span['attrs'] = attrs
-            spans.append(span)
-        return
-
-    # <seg> standalone without <w> children or child elements → token + span
-    if tag == 'seg' and not _has_descendant(element, 'w') and not list(element):
-        text = _full_text(element).strip()
-        if text:
-            idx = len(tokens)
-            tokens.append({'token': text})
-            attrs = {}
-            seg_type = element.get('type', '')
-            if seg_type:
-                attrs['type'] = seg_type
-            seg_sub = element.get('subType', '')
-            if seg_sub:
-                attrs['subType'] = seg_sub
-            span = {
-                'tag': 'seg',
-                'span': text,
-                'token_start': idx,
-                'token_end': idx,
-            }
-            if attrs:
-                span['attrs'] = attrs
-            spans.append(span)
-        return
-
-    # Record token count before recursing
-    start_idx = len(tokens)
-
-    # Recurse into children
     for child in element:
-        _walk(child, tokens, spans)
-
-    # Close span if this element opened one and tokens were added
-    if span_maker is not None and len(tokens) > start_idx:
-        end_idx = len(tokens) - 1
-        span = {
-            'tag': tag,
-            'span': _full_text(element).strip(),
-            'token_start': start_idx,
-            'token_end': end_idx,
-        }
-        attrs = span_maker(element)
-        if attrs:
-            span['attrs'] = attrs
-        spans.append(span)
+        yield from _main_text_elements(child)
 
 
-def _emit_token(w_elem, tokens, spans):
+def _source_layout(root, skip_tags=SKIP_TAGS):
+    """Return visible source text and exact element character intervals.
+
+    Recording unmarked text as well as markup is essential: searching for an
+    isolated token such as 'he' can otherwise select the substring in 'the'.
+    Intervals intentionally allow multiple subwords to share one display word.
     """
-    Create tokens from a <w> element, plus spans for nested context elements.
+    parts, ranges, offset = [], {}, 0
 
-    When a sub-<w> span-producing element (<divineName>, <hi type=...>,
-    <seg type="x-transChange">) wraps only part of the <w>'s text, the
-    <w> is split into multiple tokens so the span can target the exact
-    sub-range. This prevents unrelated translator text (e.g. leading
-    conjunctions like "And") from being incorrectly tagged as divineName
-    when the OSIS source is:
+    def append(text):
+        nonlocal offset
+        if text:
+            parts.append(text)
+            offset += len(text)
 
-        <w lemma="strong:H03068">And the <divineName>Lord</divineName></w>
-
-    Each emitted sub-token inherits the <w>'s intrinsic attributes (lemma,
-    morph, src, gloss, xlit, type, subType). Consumers who want the full
-    Strong's-group translation can concatenate adjacent tokens that share
-    a lemma; consumers who want to render the divine name accurately use
-    the divineName span, which now covers only the marked sub-range.
-
-    Intrinsic <w> attributes go on every sub-token.
-    Nested <seg type="x-morph"> and <seg type="x-variant"> do NOT split
-    the <w>; they remain as token-level markers (morphSegmented, variant).
-    """
-    # Gather intrinsic attributes shared by all sub-tokens. Multi-valued
-    # OSIS attributes (lemma, morph, xlit, src) are transformed into
-    # structured shapes — see _transform_intrinsic — so consumers never
-    # have to re-parse space-delimited, scheme-prefixed strings.
-    intrinsic = {}
-    for attr_name, attr_value in w_elem.attrib.items():
-        name = _strip_ns(attr_name)
-        if name and attr_value:
-            intrinsic[name] = _transform_intrinsic(name, attr_value)
-
-    # Collect token-level marker flags that do NOT cause splitting
-    extras = {}
-    for desc in w_elem.iter():
-        if desc is w_elem:
-            continue
-        if _strip_ns(desc.tag) != 'seg':
-            continue
-        seg_type = desc.get('type', '')
-        seg_sub = desc.get('subType', '')
-        if seg_type == 'x-morph':
-            extras['morphSegmented'] = True
-        if 'x-variant' in seg_type:
-            extras['variant'] = True
-            if seg_sub:
-                extras['variantType'] = seg_sub
-
-    # Linearize <w>'s content into (text, sub_span_info | None) segments
-    raw_segments = _linearize_w_content(w_elem)
-    segments = _merge_adjacent_segments(raw_segments)
-
-    for seg_text, sub_span in segments:
-        text = seg_text.strip()
-        if not text:
-            continue
-        idx = len(tokens)
-        token = {'token': text}
-        token.update(intrinsic)
-        token.update(extras)
-        tokens.append(token)
-        if sub_span is not None:
-            span_entry = {
-                'tag': sub_span['tag'],
-                'span': text,
-                'token_start': idx,
-                'token_end': idx,
-            }
-            attrs = sub_span.get('attrs') or {}
-            if attrs:
-                span_entry['attrs'] = attrs
-            spans.append(span_entry)
-
-
-# Sub-<w> span producers: elements that, when nested INSIDE a <w>,
-# create a span over only the sub-range of the word text they enclose.
-# Returning None means the element is not a sub-<w> span producer.
-#
-# The generic rule is "any element in _SPAN_TAGS produces a sub-<w> span
-# when nested inside a <w>." This covers every OSIS 2.1.1 context element
-# we promote to a span: divineName, transChange, hi, q, foreign,
-# inscription, name, speaker, number, unit.
-#
-# <seg> has its own logic: only x-transChange / subType=x-added produce
-# a sub-<w> span. Other seg variants (x-morph, x-variant, x-caps, etc.)
-# are token-level markers handled elsewhere in _emit_token.
-def _sub_w_span_info(elem):
-    tag = _strip_ns(elem.tag)
-    if tag == 'seg':
-        seg_type = elem.get('type', '')
-        seg_sub = elem.get('subType', '')
-        if seg_type == 'x-transChange' or seg_sub == 'x-added':
-            return {'tag': 'transChange', 'attrs': {'type': 'added'}}
-        return None
-    extractor = _SPAN_TAGS.get(tag)
-    if extractor is None:
-        return None
-    return {'tag': tag, 'attrs': extractor(elem)}
-
-
-def _linearize_w_content(w_elem):
-    """
-    Flatten the content of a <w> element into (text, span_info | None)
-    segments in document order. Each segment's span_info indicates whether
-    that text fragment falls inside a sub-<w> span-producing element.
-
-    SKIP_TAGS descendants contribute no text.
-    """
-    segments = []
-
-    def walk(elem, current_span):
-        tag = _strip_ns(elem.tag)
-        if tag in SKIP_TAGS:
+    def visit(element):
+        if _strip_ns(element.tag) in skip_tags:
+            ranges[element] = (offset, offset)
             return
-        # If this element produces a sub-<w> span, its direct text falls
-        # into that new span; otherwise it inherits the caller's context.
-        sub_span = _sub_w_span_info(elem)
-        text_span = sub_span if sub_span is not None else current_span
+        start = offset
+        append(element.text)
+        for child in element:
+            visit(child)
+            append(child.tail)
+        ranges[element] = (start, offset)
 
-        if elem.text:
-            segments.append((elem.text, text_span))
-        for child in elem:
-            walk(child, text_span)
-            if child.tail:
-                # Tail text is emitted after the child closes, back in
-                # the parent's (text_span) context — not the child's.
-                segments.append((child.tail, text_span))
-
-    # The <w> element itself is not span-producing; start with span=None.
-    if w_elem.text:
-        segments.append((w_elem.text, None))
-    for child in w_elem:
-        walk(child, None)
-        if child.tail:
-            segments.append((child.tail, None))
-    return segments
+    visit(root)
+    return ''.join(parts), ranges
 
 
-def _merge_adjacent_segments(segments):
-    """Coalesce adjacent segments that share the same span_info."""
-    merged = []
-    for text, span_info in segments:
-        if merged and _same_span(merged[-1][1], span_info):
-            merged[-1] = (merged[-1][0] + text, span_info)
-        else:
-            merged.append((text, span_info))
-    return merged
+def _trim_interval(source, start, end):
+    while start < end and source[start].isspace():
+        start += 1
+    while end > start and source[end - 1].isspace():
+        end -= 1
+    return start, end
 
 
-def _same_span(a, b):
-    if a is None and b is None:
-        return True
-    if a is None or b is None:
-        return False
-    return a.get('tag') == b.get('tag') and a.get('attrs', {}) == b.get('attrs', {})
+def _span_from_range(info, start, end, source, tokens):
+    start, end = _trim_interval(source, start, end)
+    indices = [i for i, token in enumerate(tokens)
+               if token['_source_end'] > start and token['_source_start'] < end]
+    if not indices or start >= end:
+        return None
+    span = {'tag': info['tag'], 'span': source[start:end],
+            'token_start': indices[0], 'token_end': indices[-1],
+            '_source_start': start, '_source_end': end}
+    if info.get('attrs'):
+        span['attrs'] = info['attrs']
+    return span
+
+
+def _walk(element, tokens, spans, source, ranges):
+    """Collect lexical tokens and every independently nested annotation."""
+    tag = _strip_ns(element.tag)
+    if tag in SKIP_TAGS or element not in ranges:
+        return
+    if tag == 'q' and (element.get('sID') or element.get('eID')):
+        return  # These ranges are paired in document order after this walk.
+    maker = _SPAN_TAGS.get(tag)
+    if tag == 'w' or (
+        (maker is not None or tag == 'seg')
+        and not _has_descendant(element, 'w')
+    ):
+        _emit_token(element, tokens, spans, source, ranges)
+        return
+    for child in element:
+        _walk(child, tokens, spans, source, ranges)
+    if maker is not None:
+        span = _span_from_range({'tag': tag, 'attrs': _span_attributes(element)},
+                                *ranges[element], source, tokens)
+        if span:
+            spans.append(span)
+
+
+def _emit_token(element, tokens, spans, source, ranges):
+    """Split lexical groups at annotation boundaries, preserving all layers.
+
+    Every piece retains the containing word's lexical attributes. Each nested
+    annotation is emitted once over its complete interval, so an italic divine
+    name remains both italic and divine, including when inner markup subdivides
+    only part of the outer annotation.
+    """
+    intrinsic = {}
+    is_word = _strip_ns(element.tag) == 'w'
+    if is_word:
+        intrinsic = {_strip_ns(name): _transform_intrinsic(_strip_ns(name), value)
+                     for name, value in element.attrib.items() if value}
+    extras, annotations = {}, []
+    start, end = ranges[element]
+    boundaries = {start, end}
+    for desc in element.iter():
+        if desc not in ranges:
+            continue
+        tag = _strip_ns(desc.tag)
+        if tag == 'seg':
+            seg_type, seg_sub = desc.get('type', ''), desc.get('subType', '')
+            if seg_type == 'x-morph':
+                extras['morphSegmented'] = True
+            if 'x-variant' in seg_type:
+                extras['variant'] = True
+                if seg_sub:
+                    extras['variantType'] = seg_sub
+        if desc is element and is_word:
+            continue
+        if tag == 'q' and (desc.get('sID') or desc.get('eID')):
+            boundaries.add(ranges[desc][0])
+            continue
+        info = _sub_w_span_info(desc)
+        if desc is element and tag == 'seg' and info is None:
+            info = {'tag': 'seg', 'attrs': {k: v for k, v in desc.attrib.items()
+                                          if k in {'type', 'subType'}}}
+        if info is not None:
+            lo, hi = ranges[desc]
+            boundaries.update((lo, hi))
+            annotations.append((info, lo, hi))
+    ordered = sorted(boundaries)
+    for lo, hi in zip(ordered, ordered[1:]):
+        lo, hi = _trim_interval(source, lo, hi)
+        if lo < hi:
+            tokens.append({'token': source[lo:hi], **intrinsic, **extras,
+                           '_source_start': lo, '_source_end': hi})
+    for info, lo, hi in annotations:
+        span = _span_from_range(info, lo, hi, source, tokens)
+        if span:
+            spans.append(span)
+
+
+def _sub_w_span_info(element):
+    tag = _strip_ns(element.tag)
+    if tag == 'seg':
+        if element.get('type') == 'x-transChange' or element.get('subType') == 'x-added':
+            return {'tag': 'transChange', 'attrs': {**element.attrib, 'type': 'added'}}
+        return None
+    maker = _SPAN_TAGS.get(tag)
+    return {'tag': tag, 'attrs': _span_attributes(element)} if maker is not None else None
+
+
+def _quotation_milestones(root, source, ranges, tokens, spans, state, diagnostics):
+    """Pair q milestones and emit verse-local ranges, retaining open context."""
+    active = [dict(quote, start=0) for quote in (state or {}).get('quotes', [])]
+    closed = []
+    for element in root.iter():
+        if element not in ranges or _strip_ns(element.tag) != 'q':
+            continue
+        start_id, end_id = element.get('sID'), element.get('eID')
+        at = ranges[element][0]
+        if end_id:
+            match = next((q for q in reversed(active) if q['id'] == end_id), None)
+            if match is None:
+                _diagnose(diagnostics, 'unmatched_quote_end',
+                          'Quotation end has no corresponding start', identifier=end_id)
+            else:
+                active.remove(match)
+                closed.append((match, at))
+        if start_id:
+            previous = next((q for q in active if q['id'] == start_id), None)
+            if previous is not None:
+                _diagnose(diagnostics, 'duplicate_quote_start',
+                          'Quotation identifier was opened twice', identifier=start_id)
+                active.remove(previous)
+                closed.append((previous, at))
+            active.append({'id': start_id, 'attrs': _span_attributes(element), 'start': at})
+    intervals = closed + [(quote, len(source)) for quote in active]
+    if state is not None:
+        state['quotes'] = [{'id': q['id'], 'attrs': q['attrs']} for q in active]
+    elif active:
+        _diagnose(diagnostics, 'open_quote',
+                  'Quotation continues beyond this entry; retain state to continue it')
+
+    # A quotation may have no lexical <w> tags (many translations do not).
+    # Materialize only its otherwise unrepresented interval as a plain token.
+    original_tokens = list(tokens)
+    for quote, end in intervals:
+        start, end = _trim_interval(source, quote['start'], end)
+        if start < end and not any(t['_source_end'] > start and t['_source_start'] < end
+                                   for t in tokens):
+            tokens.append({'token': source[start:end], '_source_start': start,
+                           '_source_end': end})
+    if len(tokens) != len(original_tokens):
+        tokens.sort(key=lambda token: (token['_source_start'], token['_source_end']))
+        indices = {id(token): index for index, token in enumerate(tokens)}
+        for span in spans:
+            span['token_start'] = indices[id(original_tokens[span['token_start']])]
+            span['token_end'] = indices[id(original_tokens[span['token_end']])]
+    for quote, end in intervals:
+        span = _span_from_range({'tag': 'q', 'attrs': quote['attrs']},
+                                quote['start'], end, source, tokens)
+        if span:
+            spans.append(span)
 
 
 def _has_descendant(element, tag_name):
@@ -613,7 +599,7 @@ def _has_descendant(element, tag_name):
 # This preserves data from any non-compliant OSIS source without losing it.
 # =============================================================================
 
-def _parse_scheme_grouped(value):
+def _parse_scheme_grouped(value, legacy_pipes=False):
     """
     Parse a space-delimited, scheme-prefixed OSIS attribute into a dict
     keyed by scheme, with values as arrays.
@@ -630,7 +616,10 @@ def _parse_scheme_grouped(value):
     (malformed OSIS) are grouped under the key "default" so no data is lost.
     """
     result = {}
-    for part in value.split():
+    separator = r'[\s|]+' if legacy_pipes else r'\s+'
+    for part in re.split(separator, value.strip()):
+        if not part:
+            continue
         if ':' in part:
             scheme, code = part.split(':', 1)
             if not scheme:
@@ -663,8 +652,8 @@ def _parse_space_ints(value):
 # Map from intrinsic attribute name to its shape transformer. Any <w>
 # attribute not in this map is kept as a plain string.
 _INTRINSIC_TRANSFORMS = {
-    'lemma': _parse_scheme_grouped,
-    'morph': _parse_scheme_grouped,
+    'lemma': lambda value: _parse_scheme_grouped(value, legacy_pipes=True),
+    'morph': lambda value: _parse_scheme_grouped(value, legacy_pipes=True),
     'xlit': _parse_scheme_grouped,
     'src': _parse_space_ints,
 }
@@ -749,89 +738,98 @@ def _strip_ns(tag):
 # Word-position alignment
 # =============================================================================
 
-def _assign_word_positions(clean_text, tokens, spans):
+def _normalized_characters(text):
+    """Collapse whitespace, retaining the original interval for each character."""
+    characters, positions = [], []
+    for match in re.finditer(r'\s+|\S', text):
+        characters.append(' ' if match.group().isspace() else match.group())
+        positions.append((match.start(), match.end()))
+    return ''.join(characters), positions
+
+
+def _character_alignment(source, clean_text):
+    raw, raw_positions = _normalized_characters(source)
+    clean, clean_positions = _normalized_characters(clean_text)
+    mapping = {}
+    if raw == clean:
+        mapping = dict(enumerate(range(len(raw))))
+    else:
+        for block in SequenceMatcher(None, raw, clean, autojunk=False).get_matching_blocks():
+            mapping.update((block.a + i, block.b + i) for i in range(block.size))
+    return raw_positions, clean_positions, mapping
+
+
+def build_source_alignment(root, display_text):
+    """Return ``(source, element_ranges, map_boundary)`` for study anchors.
+
+    The element ranges use Unicode character offsets into visible source text.
+    Skipped note/title/figure elements have zero-width ranges at their insertion
+    point; their descendants are deliberately absent. ``map_boundary(offset,
+    edge='after')`` maps that insertion point to a Unicode offset in display
+    text; ``before`` selects the following side if rendering inserts characters.
+    An adjacent unmatched source character returns ``None`` instead of guessing.
     """
-    Assign 1-based whitespace-word positions to every token and span.
+    source, ranges = _source_layout(root)
+    raw_positions, clean_positions, mapping = _character_alignment(source, display_text)
 
-    Each whitespace-separated run of non-space characters in clean_text is
-    one word. Word 1 is the first such run. Punctuation attached to a word
-    (e.g. "Lord,") is part of that word — consumers who want just "Lord"
-    can trim trailing punctuation on render.
+    def boundary(offset, edge='after'):
+        if offset < 0 or offset > len(source):
+            return None
+        if not source:
+            return 0 if not display_text else None
+        for index, (start, end) in enumerate(raw_positions):
+            if start < offset < end:  # A boundary inside collapsed whitespace.
+                if index not in mapping:
+                    return None
+                interval = clean_positions[mapping[index]]
+                return interval[1] if edge == 'after' else interval[0]
+        previous = next((i for i in range(len(raw_positions) - 1, -1, -1)
+                         if raw_positions[i][1] <= offset), None)
+        following = next((i for i, (start, _) in enumerate(raw_positions)
+                          if start >= offset), None)
+        candidate = previous if edge == 'after' else following
+        if candidate is None:
+            candidate = following if edge == 'after' else previous
+            selected_edge = 'before' if edge == 'after' else 'after'
+        else:
+            selected_edge = edge
+        if candidate not in mapping:
+            return None
+        interval = clean_positions[mapping[candidate]]
+        return interval[1] if selected_edge == 'after' else interval[0]
 
-    Algorithm
-    ---------
+    return source, ranges, boundary
 
-    1. Index clean_text's whitespace-words: for each word, record its
-       (char_start, char_end, word_number).
-    2. For each token, substring-match its text against clean_text starting
-       from the last matched position. Map the matched char range to a
-       word-number range.
-    3. For each span, locate its ``span`` text in clean_text (starting near
-       the first token's char position). This catches OSIS elements like
-       <q> whose marked text extends past the last <w> into trailing
-       non-tokenized text (e.g. "…know not of." where "of." lies outside
-       any <w>). Falls back to the token-derived range when the span's
-       text can't be matched.
 
-    Degenerate cases (text not found in clean_text) fall back to
-    word_start = word_end = 0. This is rare and signals an OSIS/clean-text
-    mismatch worth investigating, not silently corrupted data.
+def _assign_word_positions(clean_text, tokens, spans, source, diagnostics=None):
+    """Project complete source coordinates into the rendered display text.
+
+    Whole-entry alignment accounts for unmarked prefixes, repeated words,
+    punctuation inserted by SWORD, and whitespace normalization. It never treats
+    a lexical token as an independent substring search. Characters that cannot
+    be reconciled keep the established zero-position sentinel and are reported.
     """
-    # Build (char_start, char_end, word_number) for each whitespace-word
-    word_ranges = []
-    for match in re.finditer(r'\S+', clean_text):
-        word_ranges.append((match.start(), match.end(), len(word_ranges) + 1))
+    raw_positions, clean_positions, mapping = _character_alignment(source, clean_text)
+    source_indices = {start: index for index, (start, _) in enumerate(raw_positions)}
+    word_ranges = [(m.start(), m.end(), i + 1)
+                   for i, m in enumerate(re.finditer(r'\S+', clean_text))]
 
-    # Align tokens to clean_text and remember each token's char range so
-    # span alignment can use it as a search anchor.
-    token_char_ranges = []
-    cursor = 0
-    for token in tokens:
-        tok_text = token['token']
-        idx = clean_text.find(tok_text, cursor)
-        if idx == -1:
-            token_char_ranges.append((-1, -1))
-            token['word_start'] = 0
-            token['word_end'] = 0
-            continue
-        char_end = idx + len(tok_text)
-        token_char_ranges.append((idx, char_end))
-        ws, we = _char_range_to_words(idx, char_end, word_ranges)
-        token['word_start'] = ws
-        token['word_end'] = we
-        cursor = char_end
+    def project(start, end):
+        indices = [source_indices[index] for index in range(start, end)
+                   if index in source_indices and not source[index].isspace()]
+        if not indices or any(index not in mapping for index in indices):
+            return -1, -1
+        first, last = mapping[indices[0]], mapping[indices[-1]]
+        return clean_positions[first][0], clean_positions[last][1]
 
-    for span in spans:
-        ts = span.get('token_start', -1)
-        te = span.get('token_end', -1)
-        if not (0 <= ts < len(tokens) and 0 <= te < len(tokens)):
-            span['word_start'] = 0
-            span['word_end'] = 0
-            continue
-
-        first_char, _ = token_char_ranges[ts]
-        _, last_char = token_char_ranges[te]
-
-        # Prefer locating the span's exact text in clean_text — this
-        # captures any non-tokenized text inside the OSIS element
-        # (e.g. trailing "of." that falls outside every <w> but still
-        # sits inside the <q>…</q>).
-        char_start = char_end = -1
-        span_text = span.get('span', '')
-        if span_text and first_char >= 0:
-            char_start, char_end = _locate_span_chars(
-                clean_text, span_text, first_char, last_char
-            )
-
-        # Fall back to the token-derived char range when the span's text
-        # cannot be matched directly against the clean text.
-        if char_start < 0:
-            char_start = first_char
-            char_end = last_char
-
-        ws, we = _char_range_to_words(char_start, char_end, word_ranges)
-        span['word_start'] = ws
-        span['word_end'] = we
+    for record in tokens + spans:
+        start, end = record.pop('_source_start'), record.pop('_source_end')
+        first, last = project(start, end)
+        record['word_start'], record['word_end'] = _char_range_to_words(first, last, word_ranges)
+        if first < 0:
+            _diagnose(diagnostics, 'unaligned_annotation',
+                      'Source annotation could not be aligned with display text',
+                      annotation=record.get('token', record.get('span', '')))
 
 
 def _char_range_to_words(char_start, char_end, word_ranges):
@@ -850,39 +848,3 @@ def _char_range_to_words(char_start, char_end, word_ranges):
             ws = w_num
         we = w_num
     return (ws, we)
-
-
-def _locate_span_chars(clean_text, span_text, first_token_char, last_token_char):
-    """
-    Locate ``span_text`` in ``clean_text`` preferring the occurrence that
-    brackets the token range.
-
-    Returns (char_start, char_end), or (-1, -1) if no plausible match is
-    found. ``span_text`` is matched with collapsed internal whitespace to
-    tolerate minor formatting differences between the OSIS source and the
-    clean verse text.
-    """
-    if not span_text or not clean_text:
-        return (-1, -1)
-
-    # Exact match first (cheap path)
-    search_from = max(0, first_token_char - len(span_text))
-    idx = clean_text.find(span_text, search_from)
-    while idx != -1:
-        end = idx + len(span_text)
-        # Match must bracket the token range
-        if idx <= first_token_char and end >= last_token_char:
-            return (idx, end)
-        idx = clean_text.find(span_text, idx + 1)
-
-    # Whitespace-normalized match (tolerant of line-break/indent differences)
-    collapsed_span = re.sub(r'\s+', ' ', span_text).strip()
-    if not collapsed_span:
-        return (-1, -1)
-    # Build a regex that matches the span text with any whitespace run
-    escaped = re.escape(collapsed_span).replace(r'\ ', r'\s+')
-    for match in re.finditer(escaped, clean_text):
-        if match.start() <= first_token_char and match.end() >= last_token_char:
-            return (match.start(), match.end())
-
-    return (-1, -1)
