@@ -84,6 +84,22 @@ def test_official_note_fallback_is_retained_without_inventing_position(tmp_path)
     assert_schemas(document)
 
 
+def test_native_interverse_heading_and_reference_list_are_preserved(tmp_path):
+    record = entry(0, 1, 1, "verse", "Word", "Word")
+    record["official_attributes"] = attributes(
+        Heading={"Interverse": {"0": "Recovered heading"}, "0": {"type": "section"}},
+        Footnote={"1": {"body": "See the prophet", "type": "crossReference", "refList": "Isaiah 7:14"}},
+    )
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    chapter = document["books"][0]["chapters"][0]
+    assert chapter["editorial"][0]["text"] == "Recovered heading"
+    reference = chapter["reference"]["items"][0]
+    assert reference["text"] == "See the prophet"
+    assert reference["targets"] == [{"value": "Isaiah 7:14", "scheme": "unresolved"}]
+    assert reference["attrs"]["refList"] == "Isaiah 7:14"
+    assert_schemas(document)
+
+
 @pytest.mark.parametrize("markup,source", [
     ("gbf", '<TS>Heading<Ts>Word<RF>note<Rf>'),
     ("thml", '<h2>Heading</h2>Word<note>note</note>'),

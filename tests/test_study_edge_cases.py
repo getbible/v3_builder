@@ -128,3 +128,123 @@ def test_declared_legacy_encoding_is_not_reinterpreted_as_accidental_utf8(tmp_pa
     assert verse['text'] == '\u00c3\u00a9'
     assert verse['tokens'][0]['token'] == verse['text']
     assert_schemas(document)
+
+
+def test_source_only_unknown_format_keeps_decoded_content_with_source_anchor(tmp_path):
+    import json
+    from getbiblesword_converter import GetBibleSwordConverter
+    from test_getbiblesword_converter import _module_records, write_records
+    raw = '<special>body</special>'
+    records = _module_records([entry(0, 1, 1, 'verse', raw, '')])
+    records[1]['markup']['name'] = 'OtherMarkup'
+    contract = tmp_path / 'source.ndjson'
+    write_records(contract, records)
+    path = GetBibleSwordConverter(_config(Genesis=1), str(tmp_path / 'output')).convert(str(contract))
+    document = json.loads(open(path, encoding='utf-8').read())
+    chapter = _chapter(document)
+    assert chapter['verses'] == []
+    assert chapter['editorial'][0]['content'] == [raw]
+    assert chapter['editorial'][0]['anchor'] == {'verse': 1, 'scope': 'source', 'alignment': 'unresolved'}
+    assert_schemas(document)
+
+
+def test_same_text_heading_reconciliation_respects_distinct_source_metadata(tmp_path):
+    source = (
+        '<title level="1">Heading<note>First</note></title>'
+        '<title level="1">Heading<note>First</note></title>'
+        '<title level="2">Heading<note>Second</note></title>Word'
+    )
+    document, _ = _convert(tmp_path, _config(Genesis=1), [entry(0, 1, 1, 'verse', source, 'Word')])
+    editorial = _chapter(document)['editorial']
+    heading = next(item for item in editorial if item['type'] == 'heading' and item['attrs']['level'] == '2')
+    note_id = heading['content'][1]['attrs']['footnote_id']
+    linked_note = next(item for item in editorial if item.get('id') == note_id)
+    assert linked_note['text'] == 'Second'
+    assert_schemas(document)
+
+
+def test_native_only_heading_notes_and_references_use_separate_chapter_records(tmp_path):
+    record = entry(0, 1, 1, 'verse', 'Word', 'Word')
+    record['official_attributes'] = attributes(Heading={'Preverse': {
+        '0': '<title>Heading<note n="a">See <reference osisRef="John.3.16">John</reference></note></title>',
+    }})
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    chapter = _chapter(document)
+    heading = next(item for item in chapter['editorial'] if item['type'] == 'heading')
+    note = next(item for item in chapter['editorial'] if item['type'] == 'footnote')
+    reference = chapter['reference']['items'][0]
+    assert heading['content'][1]['attrs']['footnote_id'] == note['id']
+    assert heading['content'][1]['children'] == []
+    assert note['text'] == 'See John'
+    assert note['anchor'] == {'verse': 1, 'alignment': 'unresolved'}
+    assert note['content'][1]['attrs']['reference_id'] == reference['id']
+    assert reference['anchor']['note'] == note['id']
+    assert reference['targets'][0]['value'] == 'John.3.16'
+    assert_schemas(document)
+
+
+def test_native_heading_already_in_source_does_not_duplicate_study(tmp_path):
+    title = '<title>Heading<note>Heading note</note></title>'
+    record = entry(0, 1, 1, 'verse', title + 'Word', 'Word')
+    record['official_attributes'] = attributes(
+        Heading={'Preverse': {'0': title}},
+        Footnote={'1': {'body': 'Heading note'}},
+    )
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    editorial = _chapter(document)['editorial']
+    assert len([item for item in editorial if item['type'] == 'heading']) == 1
+    assert len([item for item in editorial if item['type'] == 'footnote']) == 1
+    assert_schemas(document)
+
+
+def test_native_heading_and_footnote_groups_share_one_recovered_body(tmp_path):
+    record = entry(0, 1, 1, 'verse', 'Word', 'Word')
+    record['official_attributes'] = attributes(
+        Heading={'Preverse': {'0': '<title>Heading<note>Heading note</note></title>'}},
+        Footnote={'1': {'body': 'Heading note'}},
+    )
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    editorial = _chapter(document)['editorial']
+    notes = [item for item in editorial if item['type'] == 'footnote']
+    assert len(notes) == 1
+    heading = next(item for item in editorial if item['type'] == 'heading')
+    assert heading['content'][1]['attrs']['footnote_id'] == notes[0]['id']
+    assert_schemas(document)
+
+
+def test_native_heading_notes_survive_an_empty_chapter_introduction(tmp_path):
+    record = entry(0, 1, 0, 'chapter', '', '')
+    record['official_attributes'] = attributes(Heading={'Preverse': {
+        '0': '<title>Heading<note>Heading note</note></title>',
+    }})
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    chapter = _chapter(document)
+    assert chapter['verses'] == []
+    note = chapter['editorial'][0]
+    assert note['anchor']['scope'] == 'introduction'
+    assert chapter['titles'][0]['content'][1]['attrs']['footnote_id'] == note['id']
+    assert_schemas(document)
+
+
+def test_native_note_only_empty_introduction_has_valid_linked_content(tmp_path):
+    record = entry(0, 1, 0, 'chapter', '', '')
+    record['official_attributes'] = attributes(Footnote={'1': {'body': 'Native introduction note'}})
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    chapter = _chapter(document)
+    note = chapter['editorial'][0]
+    assert chapter['introduction'][0]['content'][0]['attrs']['footnote_id'] == note['id']
+    assert_schemas(document)
+
+
+def test_native_preverse_with_stripped_wrapper_keeps_title_lexical_data_and_note_link(tmp_path):
+    record = entry(0, 1, 1, 'verse', 'Word', 'Word')
+    record['official_attributes'] = attributes(Heading={'Preverse': {
+        '0': '<w lemma="strong:H1">Heading</w><note>Heading note</note>',
+    }})
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    editorial = _chapter(document)['editorial']
+    heading = next(item for item in editorial if item['type'] == 'heading')
+    note = next(item for item in editorial if item['type'] == 'footnote')
+    assert heading['tokens'][0]['lemma'] == {'strong': ['H1']}
+    assert heading['content'][1]['attrs']['footnote_id'] == note['id']
+    assert_schemas(document)
