@@ -161,3 +161,73 @@ def test_note_only_chapter_introduction_keeps_content_and_links(tmp_path):
     assert chapter["introduction"][0]["content"][0]["attrs"]["footnote_id"] == note["id"]
     assert chapter["reference"]["items"][0]["anchor"]["note"] == note["id"]
     assert_schemas(document)
+
+
+def test_native_humanized_reference_list_enriches_unique_source_citation(tmp_path):
+    record = entry(0, 1, 1, 'verse',
+                   'Word<note type="crossReference">Psalm 91:11-12 </note>', 'Word')
+    record['official_attributes'] = attributes(Footnote={'1': {
+        'body': 'Psalm 91:11-12 ', 'type': 'crossReference',
+        'refList': 'Psalms 91:11-Psalms 91:12',
+    }})
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    references = document['books'][0]['chapters'][0]['reference']['items']
+    assert len(references) == 1
+    reference = references[0]
+    assert reference['id'] == 'ref-1-1'
+    assert reference['anchor'] == {'verse': 1, 'offset': 4}
+    assert reference['text'] == 'Psalm 91:11-12'
+    assert reference['attrs']['refList'] == 'Psalms 91:11-Psalms 91:12'
+    assert reference['targets'] == [{'value': 'Psalm 91:11-12', 'scheme': 'unresolved'}]
+    assert_schemas(document)
+
+
+def test_native_explicit_target_enriches_unique_source_fallback_citation(tmp_path):
+    record = entry(0, 1, 1, 'verse',
+                   'Word<note type="crossReference">Psalm 91:11-12</note>', 'Word')
+    record['official_attributes'] = attributes(Footnote={'1': {
+        'body': 'Psalm 91:11-12', 'type': 'crossReference',
+        'osisRef': 'Ps.91.11-Ps.91.12',
+    }})
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    references = document['books'][0]['chapters'][0]['reference']['items']
+    assert len(references) == 1
+    assert references[0]['anchor'] == {'verse': 1, 'offset': 4}
+    assert references[0]['text'] == 'Psalm 91:11-12'
+    assert references[0]['targets'] == [{
+        'value': 'Ps.91.11-Ps.91.12', 'scheme': 'osis', 'book': 19,
+        'chapter': 91, 'verse': 11, 'end': {'book': 19, 'chapter': 91, 'verse': 12},
+    }]
+    assert_schemas(document)
+
+
+def test_same_reference_label_with_distinct_explicit_targets_stays_distinct(tmp_path):
+    record = entry(0, 1, 1, 'verse',
+                   'Word<note type="crossReference"><reference osisRef="Gen.1.1">See</reference></note>', 'Word')
+    record['official_attributes'] = attributes(Footnote={'1': {
+        'body': 'See', 'type': 'crossReference', 'osisRef': 'Gen.2.1',
+    }})
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    references = document['books'][0]['chapters'][0]['reference']['items']
+    assert len(references) == 2
+    assert [item['targets'][0]['value'] for item in references] == ['Gen.1.1', 'Gen.2.1']
+    assert references[0]['anchor'] == {'verse': 1, 'offset': 4}
+    assert references[1]['anchor'] == {'verse': 1, 'alignment': 'unresolved'}
+    assert_schemas(document)
+
+
+def test_native_reference_does_not_guess_between_equal_source_labels(tmp_path):
+    record = entry(0, 1, 1, 'verse',
+                   'Word<note type="crossReference">See</note>more'
+                   '<note type="crossReference">See</note>', 'Wordmore')
+    record['official_attributes'] = attributes(Footnote={'1': {
+        'body': 'See', 'type': 'crossReference', 'refList': 'Isaiah 7:14',
+    }})
+    document, _ = _convert(tmp_path, _config(Genesis=1), [record])
+    references = document['books'][0]['chapters'][0]['reference']['items']
+    assert len(references) == 3
+    assert [item['anchor'] for item in references] == [
+        {'verse': 1, 'offset': 4}, {'verse': 1, 'offset': 8},
+        {'verse': 1, 'alignment': 'unresolved'},
+    ]
+    assert_schemas(document)

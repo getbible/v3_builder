@@ -143,7 +143,7 @@ class TestTokenSpanOnOsisModules:
 
 
 class TestModulesWithoutWordMarkup:
-    """Verify that modules without word markup do not invent tokens/spans."""
+    """Formatting annotations may have tokens, but cannot invent lexical data."""
 
     @pytest.fixture
     def no_word_markup_module(self, per_module):
@@ -153,14 +153,22 @@ class TestModulesWithoutWordMarkup:
             pytest.skip(f"{abbr} has OSIS word markup")
         return per_module
 
-    def test_verse_has_no_tokens(self, no_word_markup_module, integration_rng):
+    def test_annotation_tokens_do_not_invent_lexical_data(self, no_word_markup_module, integration_rng):
         books = no_word_markup_module['version_data']['books']
         book = integration_rng.choice(books)
         chapter = integration_rng.choice(book['chapters'])
         verse = integration_rng.choice(chapter['verses'])
-        assert 'tokens' not in verse, (
-            f"Verse without source word markup should not have tokens: {verse['name']}"
-        )
+        tokens = verse.get('tokens', [])
+        assert all(not token.get('lemma') and not token.get('morph') for token in tokens), verse['name']
+        if tokens:
+            # For example, Chamorro marks Jesus' speech with <q> even though
+            # it has no lexical <w> tags. Its spans need real token positions.
+            assert verse.get('spans'), verse['name']
+            for span in verse['spans']:
+                assert 0 <= span['token_start'] <= span['token_end'] < len(tokens)
+            for token in tokens:
+                start, end = token['word_start'], token['word_end']
+                assert (start == end == 0) or 1 <= start <= end <= len(verse['text'].split())
 
 
 class TestTokenSpanOnChapterFiles:
